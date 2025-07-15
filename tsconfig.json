@@ -11,6 +11,5 @@
     "outDir": "dist"
   },
   "include": [
-    "src/**/*"
-, "src/queue", "src/server"  ]
+    "src/**/*"]
 }

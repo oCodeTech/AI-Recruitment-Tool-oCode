@@ -1,3 +1,4 @@
+import { groq } from '@ai-sdk/groq';
 import { togetherai } from "@ai-sdk/togetherai";
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
@@ -18,7 +19,7 @@ Your primary functions include:
 
 RESPONSE GUIDELINES:
 - Respond directly and professionally without internal thinking processes
-- Do not use <Thinking>, <Thinking>, or any internal reasoning tags
+- Do not use <Thinking>, <Think>, or any internal reasoning tags
 - Provide clear, actionable responses immediately
 - Keep responses focused and concise
 
@@ -118,7 +119,8 @@ SCREENING CRITERIA:
 
 Use the Gmail tools systematically: fetch → analyze → screen → categorize.
 `,
-  model: togetherai("meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"),
+//   model: togetherai("meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"),
+  model: groq("qwen/qwen3-32b"),
   tools: await gmailMcp.getTools(),
   memory: new Memory({
     options: {

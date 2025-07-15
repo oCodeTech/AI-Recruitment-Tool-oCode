@@ -5,7 +5,9 @@ export const gmailMcp = new MCPClient({
   servers: {
     gmail: {
       command: "npx",
-      args: ["@gongrzhe/server-gmail-autoauth-mcp"]
+      args: [
+        "@gongrzhe/server-gmail-autoauth-mcp"
+      ]
     },
   },
 });

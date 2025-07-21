@@ -1,14 +1,14 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { gmailMcp } from "../mcpservers/gmail";
-import { config } from "dotenv";
-import path, { parse } from "path";
-import { fileURLToPath } from "url";
+// import { config } from "dotenv";
+// import path, { parse } from "path";
+// import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
 
-config({ path: path.resolve(__dirname, "../../../.env") });
+// config({ path: path.resolve(__dirname, "../../../.env") });
 
 const recruitmentMail = process.env.RECRUITMENT_MAIL;
 

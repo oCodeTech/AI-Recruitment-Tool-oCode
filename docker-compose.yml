@@ -1,0 +1,10 @@
+services:
+  mastra-app:
+    build: .
+    ports:
+      - "4111:4111" # Change if your app uses a different port
+      - "5000:5000"
+    environment:
+      POSTHOG_API_KEY: ""
+      POSTHOG_DISABLED: true
+    restart: unless-stopped

@@ -105,73 +105,14 @@ const AgentTrigger = createStep({
       );
     }
 
-    const gmailAgent = mastra?.getAgent("gmailAgent");
+    const gmailMetaAgent = mastra?.getAgent("gmailMetaAgent");
 
-    if (!gmailAgent) {
+    if (!gmailMetaAgent) {
       throw new Error("Gmail agent not found");
     }
 
     const fetchNewMailsPrompt = {
-      instructions: `You are an expert Gmail Assistant, designed to efficiently and accurately identify job application emails from newly arrived messages, ensuring only valid data is processed. Your primary function is to sift through recent emails and extract the Gmail message IDs of potential job applications, adhering to strict filtering criteria with utmost accuracy.
-
-Here's the process you will follow:
-
-**1. Email Retrieval:**
-
-* Utilize the gmail_search_emails tool with a precise query to focus on emails in the inbox. The query should incorporate keywords related to job applications to narrow down the search.
-
-**2. Job Application Identification:**
-
-* Analyze the emails based on the following indicators:
-  * **Subject:** Look for terms like "application," "applying," "resume," "job," "position," "cover letter," "hiring," "interview," "candidate," and "recruitment."
-  * **Sender:** Identify emails from HR departments, recruiters, and job boards.
-  * **Content:** Scan for job-related keywords within the email body.
-
-**3. Critical Filtering (Exclusion Criteria):**
-
-* Apply the following filters to exclude irrelevant emails:
-  * **Sender:** Exclude emails originating from ${recruitmentMail} (our internal recruitment email address).
-  * **Sender Domain:** Exclude emails from domains containing "recruitment," "hr@," or "hiring@" if they match our domain.
-  * **Subject:** Exclude emails with subjects starting with "Re:" (replies to existing threads).
-  * **Body:** Exclude emails containing phrases like:
-    * "Best regards, Recruitment Team"
-    * "We encourage you to reapply"
-    * "Thank you for your interest in the"
-    * "Our recruitment team will review"
-    * "Missing documents"
-    * "Complete application"
-
-**4. Message ID Extraction:**
-
-* From the emails that pass all filtering criteria, extract ONLY the Gmail message IDs (as strings).
-
-**5. Output Formatting (CRITICAL):**
-
-* Return the results in a specific JSON array format: ["messageId1", "messageId2", "messageId3"].
-* If no valid job application emails are found, return an empty array: [].
-* **ABSOLUTELY NO** additional text, explanations, descriptions, or processing details should be included in the output.
-
-**Constraints:**
-
-* Focus on all emails in the inbox.
-* The only available tool is gmail_search_email.
-* Ensure the provided message IDs are correct and correspond to valid job application emails.
-* Exclude all emails from ${recruitmentMail}.
-* Exclude all replies and recruitment team emails.
-
-**Example Outputs:**
-
-* Valid: ["1a2b3c4d5e", "6f7g8h9i0j"]
-* Valid: ["abc123"]
-* Valid: []
-* Invalid: "Found 2 emails: ['abc123', 'def456']"
-* Invalid: "Search complete. Results: ['abc123']"
-* Invalid: "After filtering: ['abc123', 'def456']"
-* Invalid: Any text before or after the array
-
-**Task:**
-
-Given the Gmail Pub/Sub notification with historyId: ${historyId}, execute the search and filtering process to identify job application emails and return the message IDs in the specified JSON array format, ensuring all data is accurate and not fabricated.`,
+      instructions: `Fetch new job application emails based on strict filtering criteria. Return ONLY an array of email IDs in JSON format. If no emails are found, return an empty array [].`,
       maxSteps: 50,
       maxTokens: 512,
       toolsets: await gmailMcp.getToolsets(),
@@ -179,15 +120,15 @@ Given the Gmail Pub/Sub notification with historyId: ${historyId}, execute the s
 
     try {
       const result = await callAgent(
-        gmailAgent,
+        gmailMetaAgent,
         `URGENT: Gmail Pub/Sub notification received! New email(s) arrived (historyId: ${historyId}). Search for job application emails among the newly arrived messages.`,
         fetchNewMailsPrompt
       );
 
       console.log("STEP 1 (iteration): FETCH NEW EMAILS Output:", result);
-      // const parsedResult = JSON.parse(result);
-      // console.log("STEP 1 (iteration): FETCH NEW EMAILS parsed Output:", parsedResult);
-      return result;
+      const parsedResult = JSON.parse(result);
+      console.log("STEP 1 (iteration): FETCH NEW EMAILS parsed Output:", parsedResult);
+      return parsedResult;
     } catch (err) {
       console.error("Error in agent-trigger step:", err);
       return [];
@@ -300,9 +241,10 @@ const processRecruitmentEmail = createStep({
       return ProcessedEmailOutput.parse({});
     }
 
-    const gmailAgent = mastra.getAgent("gmailAgent");
+    const gmailMetaAgent = mastra.getAgent("gmailMetaAgent");
+    const gmailGroqAgent = mastra.getAgent("gmailGroqAgent");
 
-    if (!gmailAgent) {
+    if (!gmailMetaAgent) {
       throw new Error("Gmail agent not found");
     }
 
@@ -331,6 +273,10 @@ Available tools for use: ${await gmailMcp.getToolsets()}.
       maxTokens: 200,
       toolsets: await gmailMcp.getToolsets(),
     };
+
+    if(!gmailGroqAgent){
+      throw new Error("GmailGroqAgent not found");
+    }
 
 const extractDataPrompt = {
   instructions: `
@@ -405,8 +351,8 @@ Available tools for use: ${await gmailMcp.getToolsets()}. After calling gmail_re
 
     try {
       const securityCheckResult = await callAgent(
-        gmailAgent,
-        `Process this email using an agent with Gmail tools: ${emailId}.`,
+        gmailMetaAgent,
+        `Process this email using an agent with Gmail tools: ${emailId}`,
         securityCheckPrompt
       );
 
@@ -428,7 +374,7 @@ Available tools for use: ${await gmailMcp.getToolsets()}. After calling gmail_re
       }
 
       const extractEmailResult = await callAgent(
-        gmailAgent,
+        gmailGroqAgent,
         `Process this email using an agent with Gmail tools: ${emailId}.`,
         extractDataPrompt
       );
@@ -448,7 +394,7 @@ Available tools for use: ${await gmailMcp.getToolsets()}. After calling gmail_re
       parsedEmailProcessingResult.messageId = emailId;
 
       const analyzeEmailResult = await callAgent(
-        gmailAgent,
+        gmailMetaAgent,
         `Process this email using an agent with Gmail tools: ${emailId}.`,
         analyzeEmailPrompt
       );
@@ -497,9 +443,9 @@ const sendRejectionEmail = createStep({
       return "No processed email data found";
     }
 
-    const gmailAgent = mastra?.getAgent("gmailAgent");
+    const gmailMetaAgent = mastra?.getAgent("gmailMetaAgent");
 
-    if (!gmailAgent) {
+    if (!gmailMetaAgent) {
       throw new Error("Gmail agent not found");
     }
 
@@ -525,9 +471,9 @@ const sendConfirmationEmail = createStep({
       return "No processed email data found";
     }
 
-    const gmailAgent = mastra?.getAgent("gmailAgent");
+    const gmailMetaAgent = mastra?.getAgent("gmailMetaAgent");
 
-    if (!gmailAgent) {
+    if (!gmailMetaAgent) {
       throw new Error("Gmail agent not found");
     }
 
@@ -548,9 +494,9 @@ const sendConfirmationEmail = createStep({
 //       return "No input data found";
 //     }
 
-//     const gmailAgent = mastra?.getAgent("gmailAgent");
+//     const gmailMetaAgent = mastra?.getAgent("gmailMetaAgent");
 
-//     if (!gmailAgent) {
+//     if (!gmailMetaAgent) {
 //       throw new Error("Gmail agent not found");
 //     }
 
@@ -642,7 +588,7 @@ const sendConfirmationEmail = createStep({
 //       toolsets: await gmailMcp.getToolsets(),
 //     };
 //     try {
-//       const result = await gmailAgent.generate(
+//       const result = await gmailMetaAgent.generate(
 //         `Send reply email to candidate by analyzing email details: ${JSON.stringify(inputData)}.`,
 //         sendReplyPrompt
 //       );
@@ -660,7 +606,7 @@ const sendConfirmationEmail = createStep({
 //         await new Promise((resolve) => setTimeout(resolve, 60000)); // Block and wait for 1 minute
 
 //         try {
-//           const retryResult = await gmailAgent.generate(
+//           const retryResult = await gmailMetaAgent.generate(
 //             `Send reply email to candidate by analyzing email details: ${JSON.stringify(inputData)}.`,
 
 //             sendReplyPrompt
@@ -683,7 +629,7 @@ const sendConfirmationEmail = createStep({
 //         await new Promise((resolve) => setTimeout(resolve, 60000)); // Block and wait for 1 minute
 
 //         try {
-//           const retryResult = await gmailAgent.generate(
+//           const retryResult = await gmailMetaAgent.generate(
 //             `Send reply email to candidate by analyzing email details: ${JSON.stringify(inputData)}.`,
 
 //             sendReplyPrompt
@@ -720,9 +666,9 @@ const sendConfirmationEmail = createStep({
 //       return "no new emails to process";
 //     }
 
-//     const gmailAgent = mastra.getAgent("gmailAgent");
+//     const gmailMetaAgent = mastra.getAgent("gmailMetaAgent");
 
-//     if (!gmailAgent) {
+//     if (!gmailMetaAgent) {
 //       throw new Error("Gmail agent not found");
 //     }
 
@@ -792,7 +738,7 @@ const sendConfirmationEmail = createStep({
 //     };
 
 //     try {
-//       const result = await gmailAgent.generate(
+//       const result = await gmailMetaAgent.generate(
 //         `Process recruitment workflow for email ID: ${JSON.stringify(emailId)}. Send rejection emails from ${recruitmentMail} to candidates missing documents.`,
 
 //         processRecruitmentEmailsPrompt
@@ -811,7 +757,7 @@ const sendConfirmationEmail = createStep({
 //         await new Promise((resolve) => setTimeout(resolve, 60000)); // Block and wait for 1 minute
 
 //         try {
-//           const retryResult = await gmailAgent.generate(
+//           const retryResult = await gmailMetaAgent.generate(
 //             `Process recruitment workflow for email ID: ${JSON.stringify(emailId)}. Send rejection emails from ${recruitmentMail} to candidates missing documents.`,
 
 //             processRecruitmentEmailsPrompt
@@ -837,7 +783,7 @@ const sendConfirmationEmail = createStep({
 //         await new Promise((resolve) => setTimeout(resolve, 60000)); // Block and wait for 1 minute
 
 //         try {
-//           const retryResult = await gmailAgent.generate(
+//           const retryResult = await gmailMetaAgent.generate(
 //             `Process recruitment workflow for email ID: ${JSON.stringify(emailId)}. Send rejection emails from ${recruitmentMail} to candidates missing documents.`,
 
 //             processRecruitmentEmailsPrompt
@@ -875,9 +821,9 @@ const sendConfirmationEmail = createStep({
 //       return "No input data found";
 //     }
 
-//     const gmailAgent = mastra?.getAgent("gmailAgent");
+//     const gmailMetaAgent = mastra?.getAgent("gmailMetaAgent");
 
-//     if (!gmailAgent) {
+//     if (!gmailMetaAgent) {
 //       throw new Error("Gmail agent not found");
 //     }
 
@@ -969,7 +915,7 @@ const sendConfirmationEmail = createStep({
 //       toolsets: await gmailMcp.getToolsets(),
 //     };
 //     try {
-//       const result = await gmailAgent.generate(
+//       const result = await gmailMetaAgent.generate(
 //         `Send reply email to candidate by analyzing email details: ${JSON.stringify(inputData)}.`,
 //         sendReplyPrompt
 //       );
@@ -987,7 +933,7 @@ const sendConfirmationEmail = createStep({
 //         await new Promise((resolve) => setTimeout(resolve, 60000)); // Block and wait for 1 minute
 
 //         try {
-//           const retryResult = await gmailAgent.generate(
+//           const retryResult = await gmailMetaAgent.generate(
 //             `Send reply email to candidate by analyzing email details: ${JSON.stringify(inputData)}.`,
 
 //             sendReplyPrompt
@@ -1010,7 +956,7 @@ const sendConfirmationEmail = createStep({
 //         await new Promise((resolve) => setTimeout(resolve, 60000)); // Block and wait for 1 minute
 
 //         try {
-//           const retryResult = await gmailAgent.generate(
+//           const retryResult = await gmailMetaAgent.generate(
 //             `Send reply email to candidate by analyzing email details: ${JSON.stringify(inputData)}.`,
 
 //             sendReplyPrompt

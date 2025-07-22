@@ -2,11 +2,14 @@ import { createStep, createWorkflow } from "@mastra/core";
 import z from "zod";
 import {
   containsKeyword,
-  getDraftTemplates,
+  getDraftTemplate,
   getEmailContent,
+  getLabelId,
+  getThreadMessages,
   gmailSearchEmails,
   modifyEmailLabels,
   sendEmail,
+  sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
 import { gmail_v1 } from "googleapis";
@@ -52,8 +55,7 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      query: "label:inbox is:unread",
-      labelIds: ["INBOX", "UNREAD"],
+      q: `label:INBOX -label:REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS is:unread`,
       maxResults: 100,
     };
 
@@ -161,6 +163,10 @@ const extractEmailMetaData = createStep({
 
     try {
       const { emailId, threadId } = inputData;
+
+      const threadMessages = await getThreadMessages(threadId);
+
+      if (threadMessages && threadMessages.length > 1) return null;
 
       const email = await getEmailContent(emailId!);
 
@@ -409,49 +415,18 @@ const sendMultipleRejectionReasonsMail = createStep({
       if (!mail || !mail.userEmail) {
         continue;
       }
-      try {
-        const rejectionTemplateMail = await getDraftTemplates({
-          userId: "me",
-          q: "is:draft label:templates-rejection-missing_multiple_details",
-        });
 
-        if (!rejectionTemplateMail) {
-          console.log("No rejection template found");
-          return "No rejection template found";
-        }
-
-        const plainTextPart = rejectionTemplateMail.payload?.parts?.find(
-          (p) => p.mimeType === "text/plain"
-        );
-        const rejectionMailTemplate = decodeEmailBody(plainTextPart);
-
-        const rejectionMail = rejectionMailTemplate
-          .replaceAll("[Candidate Name]", mail.name ? mail.name : "Candidate")
-          .replaceAll(
-            "[Job Title]",
-            mail.position && mail.position !== "unclear"
-              ? mail.position
-              : "applied"
-          )
-          .replaceAll("[Company Name]", "Ocode Technologies");
-
-        const sendMailResp = await sendEmail({
-          to: mail.userEmail,
-          subject: `Re: ${mail.subject}`,
-          body: rejectionMail,
-          threadId: mail.threadId,
-        });
-
-        if (sendMailResp.id && sendMailResp.labelIds?.includes("SENT")) {
-          await modifyEmailLabels({
-            emailId: mail.emailId,
-            addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-            removeLabelIds: ["INBOX"],
-          });
-        }
-      } catch (err) {
-        console.log(err);
-      }
+      await sendThreadReplyEmail({
+        name: mail.name || "",
+        position: mail.position || "unclear",
+        userEmail: mail.userEmail,
+        subject: mail.subject,
+        threadId: mail.threadId,
+        emailId: mail.emailId,
+        templateId: "templates-rejection-missing_multiple_details",
+        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+        removeLabelIds: ["INBOX"],
+      });
     }
 
     return "Resume missing emails sent successfully";
@@ -474,49 +449,18 @@ const sendResumeMissingMail = createStep({
       if (!mail || !mail.userEmail) {
         continue;
       }
-      try {
-        const rejectionTemplateMail = await getDraftTemplates({
-          userId: "me",
-          q: "is:draft label:templates-rejection-no_resume",
-        });
 
-        if (!rejectionTemplateMail) {
-          console.log("No rejection template found");
-          return "No rejection template found";
-        }
-
-        const plainTextPart = rejectionTemplateMail.payload?.parts?.find(
-          (p) => p.mimeType === "text/plain"
-        );
-        const rejectionMailTemplate = decodeEmailBody(plainTextPart);
-
-        const rejectionMail = rejectionMailTemplate
-          .replaceAll("[Candidate Name]", mail.name ? mail.name : "Candidate")
-          .replaceAll(
-            "[Job Title]",
-            mail.position && mail.position !== "unclear"
-              ? mail.position
-              : "applied"
-          )
-          .replaceAll("[Company Name]", "Ocode Technologies");
-
-        const sendMailResp = await sendEmail({
-          to: mail.userEmail,
-          subject: `Re: ${mail.subject}`,
-          body: rejectionMail,
-          threadId: mail.threadId,
-        });
-
-        if (sendMailResp.id && sendMailResp.labelIds?.includes("SENT")) {
-          await modifyEmailLabels({
-            emailId: mail.emailId,
-            addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-            removeLabelIds: ["INBOX"],
-          });
-        }
-      } catch (err) {
-        console.log(err);
-      }
+      await sendThreadReplyEmail({
+        name: mail.name || "",
+        position: mail.position || "unclear",
+        userEmail: mail.userEmail,
+        subject: mail.subject,
+        threadId: mail.threadId,
+        emailId: mail.emailId,
+        templateId: "templates-rejection-no_resume",
+        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+        removeLabelIds: ["INBOX"],
+      });
     }
 
     return "Resume missing emails sent successfully";
@@ -540,48 +484,18 @@ const sendCoverLetterMissingEmail = createStep({
       if (!mail || !mail.userEmail) {
         continue;
       }
-      try {
-        const rejectionTemplateMail = await getDraftTemplates({
-          userId: "me",
-          q: "is:draft label:templates-rejection-no_cover_letter",
-        });
 
-        if (!rejectionTemplateMail) {
-          console.log("No rejection template found");
-          return "No rejection template found";
-        }
-
-        const plainTextPart = rejectionTemplateMail.payload?.parts?.find(
-          (p) => p.mimeType === "text/plain"
-        );
-        const rejectionMailTemplate = decodeEmailBody(plainTextPart);
-        const rejectionMail = rejectionMailTemplate
-          .replaceAll("[Candidate Name]", mail.name ? mail.name : "Candidate")
-          .replaceAll(
-            "[Job Title]",
-            mail.position && mail.position !== "unclear"
-              ? mail.position
-              : "applied"
-          )
-          .replaceAll("[Company Name]", "Ocode Technologies");
-
-        const sendMailResp = await sendEmail({
-          to: mail.userEmail,
-          subject: `Re: ${mail.subject}`,
-          body: rejectionMail,
-          threadId: mail.threadId,
-        });
-
-        if (sendMailResp.id && sendMailResp.labelIds?.includes("SENT")) {
-          await modifyEmailLabels({
-            emailId: mail.emailId,
-            addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-            removeLabelIds: ["INBOX"],
-          });
-        }
-      } catch (err) {
-        console.log(err);
-      }
+      await sendThreadReplyEmail({
+        name: mail.name || "",
+        position: mail.position || "unclear",
+        userEmail: mail.userEmail,
+        subject: mail.subject,
+        threadId: mail.threadId,
+        emailId: mail.emailId,
+        templateId: "templates-rejection-no_cover_letter",
+        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+        removeLabelIds: ["INBOX"],
+      });
     }
 
     return "Cover letter missing emails sent successfully";
@@ -605,49 +519,18 @@ const sendUnclearPositionEmail = createStep({
       if (!mail || !mail.userEmail) {
         continue;
       }
-      try {
-        const rejectionTemplateMail = await getDraftTemplates({
-          userId: "me",
-          q: "is:draft label:templates-rejection-no_clear_job_position",
-        });
 
-        if (!rejectionTemplateMail) {
-          console.log("No rejection template found");
-          return "No rejection template found";
-        }
-
-        const plainTextPart = rejectionTemplateMail.payload?.parts?.find(
-          (p) => p.mimeType === "text/plain"
-        );
-        const rejectionMailTemplate = decodeEmailBody(plainTextPart);
-
-        const rejectionMail = rejectionMailTemplate
-          .replaceAll("[Candidate Name]", mail.name ? mail.name : "Candidate")
-          .replaceAll(
-            "[Job Title]",
-            mail.position && mail.position !== "unclear"
-              ? mail.position
-              : "applied"
-          )
-          .replaceAll("[Company Name]", "Ocode Technologies");
-
-        const sendMailResp = await sendEmail({
-          to: mail.userEmail,
-          subject: `Re: ${mail.subject}`,
-          body: rejectionMail,
-          threadId: mail.threadId,
-        });
-
-        if (sendMailResp.id && sendMailResp.labelIds?.includes("SENT")) {
-          await modifyEmailLabels({
-            emailId: mail.emailId,
-            addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-            removeLabelIds: ["INBOX"],
-          });
-        }
-      } catch (err) {
-        console.log(err);
-      }
+      await sendThreadReplyEmail({
+        name: mail.name || "",
+        position: mail.position || "unclear",
+        userEmail: mail.userEmail,
+        subject: mail.subject,
+        threadId: mail.threadId,
+        emailId: mail.emailId,
+        templateId: "templates-rejection-no_clear_job_position",
+        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+        removeLabelIds: ["INBOX"],
+      });
     }
 
     return "Unclear position emails sent successfully";
@@ -671,51 +554,25 @@ const sendConfirmationEmail = createStep({
       if (!mail || !mail.userEmail) {
         continue;
       }
-      try {
-        const confirmationTemplateMail = await getDraftTemplates({
-          userId: "me",
-          q: "is:draft label:templates-confirmation-job_application_received",
-        });
 
-        if (!confirmationTemplateMail) {
-          console.log("No confirmation template found");
-          return "No confirmation template found";
-        }
+      const applicationCategory = mail.position
+        ? `${mail.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
+        : "";
 
-        const plainTextPart = confirmationTemplateMail.payload?.parts?.find(
-          (p) => p.mimeType === "text/plain"
-        );
-        const confirmationMailTemplate = decodeEmailBody(plainTextPart);
-
-        const confirmationMail = confirmationMailTemplate
-          .replaceAll("[Candidate Name]", mail.name ? mail.name : "Candidate")
-          .replaceAll(
-            "[Job Title]",
-            mail.position && mail.position !== "unclear"
-              ? mail.position
-              : "applied"
-          )
-          .replaceAll("[Company Name]", "Ocode Technologies");
-
-        const sendMailResp = await sendEmail({
-          to: mail.userEmail,
-          subject: `Re: ${mail.subject}`,
-          body: confirmationMail,
-          threadId: mail.threadId,
-        });
-
-        if (sendMailResp.id && sendMailResp.labelIds?.includes("SENT")) {
-          await modifyEmailLabels({
-            emailId: mail.emailId,
-            addLabelIds: [
-              `${mail.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`,
-            ],
-            removeLabelIds: ["INBOX"],
-          });
-        }
-      } catch (err) {
-        console.log(err);
-      }
+      await sendThreadReplyEmail({
+        name: mail.name || "",
+        position: mail.position || "unclear",
+        userEmail: mail.userEmail,
+        subject: mail.subject,
+        threadId: mail.threadId,
+        emailId: mail.emailId,
+        templateId: "templates-confirmation-job_application_received",
+        addLabelIds: [applicationCategory, "APPLICANTS"],
+        removeLabelIds: [
+          "INBOX",
+          "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+        ],
+      });
     }
 
     return "Confirmation emails sent successfully";
@@ -776,13 +633,12 @@ const recruitWorkflowV3 = createWorkflow({
 
 recruitWorkflowV3.commit();
 
-
 const executeRecruitWorkflow = async () => {
   try {
     const workflowId = "recruitWorkflowV3";
 
     const res = await fetch(
-      `http://localhost:4112/api/workflows/${workflowId}/start-async`,
+      `http://localhost:4111/api/workflows/${workflowId}/start-async`,
       {
         method: "POST",
         headers: {

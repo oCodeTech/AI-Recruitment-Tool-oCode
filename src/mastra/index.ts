@@ -14,6 +14,7 @@ import {
 
 import express from "express";
 import cron from "node-cron";
+import { trackReplyMailsWorkflow } from "./workflows/track-reply-mails-workflow";
 
 const app = express();
 const port = process.env.NODE_PORT || 3000;
@@ -25,7 +26,10 @@ export const mastra = new Mastra({
     recruitAgentWorkflow,
     recruitWorkflow,
     recruitWorkflowV2,
+    
+    // current recruit workflow
     recruitWorkflowV3,
+    trackReplyMailsWorkflow
   },
   agents: { gmailMetaAgent, gmailGroqAgent },
   storage: new LibSQLStore({
@@ -42,7 +46,7 @@ app.get("/", (req, res) => {
   res.send("server is up and running");
 });
 
-cron.schedule("0 */2 * * * *", () => {
+cron.schedule("0 */2 * * *", () => {
   console.log("🔄 Executing recruitment workflow...");
   executeRecruitWorkflow().catch(console.error);
 });

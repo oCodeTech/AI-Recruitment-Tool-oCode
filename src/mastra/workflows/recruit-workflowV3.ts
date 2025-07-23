@@ -2,13 +2,10 @@ import { createStep, createWorkflow } from "@mastra/core";
 import z from "zod";
 import {
   containsKeyword,
-  getDraftTemplate,
   getEmailContent,
-  getLabelId,
   getThreadMessages,
   gmailSearchEmails,
   modifyEmailLabels,
-  sendEmail,
   sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
@@ -133,6 +130,8 @@ const ExtractEmailMetaDataOutput = z
     hasCoverLetter: z.boolean(),
     hasResume: z.boolean(),
     position: z.string().nullable(),
+    category: z.string().nullable(),
+    experienceStatus: z.string().nullable(),
   })
   .nullable()
   .describe("Extracted email metadata");
@@ -256,40 +255,41 @@ const extractEmailMetaData = createStep({
 
       try {
         const grokAgent = mastra.getAgent("gmailGroqAgent");
-
         const result = await grokAgent.generate(
-          "Analyze the email subject and body to determine the most likely job title the candidate is applying for. Output only a JSON object with the job title or 'unclear'.",
+          "Analyze the email subject, body and application to determine the most likely job title the candidate is applying for, experience status and category. Output only a JSON object with the job title, experience status and category or 'unclear'.",
           {
             instructions: `
-      You are given the subject and body of a job application email. Your task is to determine the most likely job title the candidate is applying for.
-      - Use explicit mentions, strong contextual clues, and careful reasoning to infer the job title.
+      You are given the subject and body of a job application email. Your task is to determine the most likely job title the candidate is applying for, experience status and category.
+      - Use explicit mentions, strong contextual clues, and careful reasoning to infer the job title, experience status and category.
       - Only infer a job title if there is clear, unambiguous evidence in the subject or body (such as direct statements, repeated references, or a clear match between skills/experience and a standard job title).
       - Do not guess or invent job titles that are not clearly supported by the content.
       - Do not use any tools, functions, or API calls. Only analyze the provided subject and body.
       - Normalize job titles to standard forms (e.g., "Full Stack Web Developer" and "Full Stack Developer" are equivalent).
       - If multiple job titles are possible, return the one most strongly indicated by the content.
       - If no job title can be reasonably and confidently inferred, return 'unclear'.
-      - Output only a JSON object in the following format: {"job_title": "<job title or 'unclear'>"}
+      - Determine the category based on the job title and body of the email. If unsure, return 'unclear'.
+      - The category can be one of the following values: TECH, NON-TECH, CREATIVE
+      - Output only a JSON object in the following format: {"job_title": "<job title or 'unclear'>", "experience_status": "<fresher or experienced or 'unclear'>", "category": "<TECH or NON-TECH or CREATIVE or 'unclear'>"}
       Examples:
       Subject: "Applying for full stack developer"
       Body: "I am writing to express my interest in the Full Stack Web Developer role. My background in both front-end and back-end development positions me to contribute effectively to your team."
-      Output: {"job_title": "Full Stack Developer"}
+      Output: {"job_title": "Full Stack Developer", "experience_status": "experienced", "category": "TECH"}
 
       Subject: "Application for Data Scientist"
       Body: "I am interested in the Data Scientist role."
-      Output: {"job_title": "Data Scientist"}
+      Output: {"job_title": "Data Scientist", "experience_status": "unclear", "category": "TECH"}
 
       Subject: "Job application"
       Body: "I am writing to express my interest in a position at your company. My experience is in software development and I have worked as a Frontend Developer."
-      Output: {"job_title": "Frontend Developer"}
+      Output: {"job_title": "Frontend Developer", "experience_status": "experienced", "category": "TECH"}
 
       Subject: "Job application"
       Body: "I am writing to express my interest in a position at your company. I have experience in several areas of technology."
-      Output: {"job_title": "unclear"}
+      Output: {"job_title": "unclear", "experience_status": "unclear", "category": "TECH"}
 
       Subject: "Question about your company"
       Body: "I am interested in learning more about your services."
-      Output: {"job_title": "unclear"}
+      Output: {"job_title": "unclear", "experience_status": "unclear", "category": "unclear"}
 
       Subject: ${subject}
       Body: ${decodedBody}
@@ -298,15 +298,19 @@ const extractEmailMetaData = createStep({
             maxTokens: 50,
           }
         );
-        const jobPosition: { job_title: string } = extractJsonFromResult(
-          result.text
-        );
+        const generatedResult: {
+          job_title: string;
+          experience_status: string;
+          category: string;
+        } = extractJsonFromResult(result.text);
 
         return {
           ...emailMetaData,
           hasCoverLetter,
           hasResume,
-          position: jobPosition.job_title || "unclear",
+          position: generatedResult.job_title || "unclear",
+          category: generatedResult.category || "unclear",
+          experienceStatus: generatedResult.experience_status || "unclear",
         };
       } catch (err) {
         console.log("error occured while extracting job title", err);
@@ -315,6 +319,8 @@ const extractEmailMetaData = createStep({
           hasCoverLetter,
           hasResume,
           position: null,
+          category: null,
+          experienceStatus: null,
         };
       }
     } catch (err) {
@@ -559,7 +565,7 @@ const sendConfirmationEmail = createStep({
         ? `${mail.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
         : "";
 
-      await sendThreadReplyEmail({
+      const confirmationEmailResp = await sendThreadReplyEmail({
         name: mail.name || "",
         position: mail.position || "unclear",
         userEmail: mail.userEmail,
@@ -573,6 +579,97 @@ const sendConfirmationEmail = createStep({
           "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
         ],
       });
+
+      console.log("Confirmation email response:", confirmationEmailResp);
+
+      if (confirmationEmailResp?.labelIds?.includes("SENT")) {
+        switch (mail.category) {
+          case "TECH":
+            const templateId =
+              mail.experienceStatus === "experienced"
+                ? "templates-request_key_details-tech-experienced"
+                : mail.experienceStatus === "fresher"
+                  ? "templates-request_key_details-tech-fresher"
+                  : null;
+
+            if (!templateId || !mail.position || mail.position === "unclear") {
+              await modifyEmailLabels({
+                emailId: mail.emailId,
+                addLabelIds: ["UNCLEAR_APPLICANTS"],
+                removeLabelIds: [
+                  "INBOX",
+                  "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+                ],
+              });
+              continue;
+            }
+
+            await sendThreadReplyEmail({
+              name: mail.name || "",
+              position: mail.position || "unclear",
+              userEmail: mail.userEmail,
+              subject:
+                "Application Acknowledged - Request for Additional Information",
+              threadId: mail.threadId,
+              emailId: mail.emailId,
+              templateId: templateId,
+              addLabelIds: [applicationCategory, "APPLICANTS"],
+              removeLabelIds: [
+                "INBOX",
+                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+              ],
+            });
+
+            break;
+
+          case "NON-TECH":
+            await sendThreadReplyEmail({
+              name: mail.name || "",
+              position: mail.position || "unclear",
+              userEmail: mail.userEmail,
+              subject:
+                "Application Acknowledged - Request for Additional Information",
+              threadId: mail.threadId,
+              emailId: mail.emailId,
+              templateId: "templates-request_key_details-non-tech",
+              addLabelIds: [applicationCategory, "APPLICANTS"],
+              removeLabelIds: [
+                "INBOX",
+                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+              ],
+            });
+            break;
+
+          case "CREATIVE":
+            await sendThreadReplyEmail({
+              name: mail.name || "",
+              position: mail.position || "unclear",
+              userEmail: mail.userEmail,
+              subject:
+                "Application Acknowledged - Request for Additional Information",
+              threadId: mail.threadId,
+              emailId: mail.emailId,
+              templateId: "templates-request_key_details-creative",
+              addLabelIds: [applicationCategory, "APPLICANTS"],
+              removeLabelIds: [
+                "INBOX",
+                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+              ],
+            });
+            break;
+
+          default:
+            await modifyEmailLabels({
+              emailId: mail.emailId,
+              addLabelIds: ["UNCLEAR_APPLICANTS"],
+              removeLabelIds: [
+                "INBOX",
+                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+              ],
+            });
+            break;
+        }
+      }
     }
 
     return "Confirmation emails sent successfully";
@@ -633,32 +730,4 @@ const recruitWorkflowV3 = createWorkflow({
 
 recruitWorkflowV3.commit();
 
-const executeRecruitWorkflow = async () => {
-  try {
-    const workflowId = "recruitWorkflowV3";
-
-    const res = await fetch(
-      `http://localhost:4111/api/workflows/${workflowId}/start-async`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inputData: true,
-        }),
-      }
-    );
-
-    console.log(
-      "Successfully sent signal to start the workflow:",
-      res.status,
-      res.statusText
-    );
-  } catch (error) {
-    console.error("Error sending signal to start the workflow:", error);
-    return;
-  }
-};
-
-export { recruitWorkflowV3, executeRecruitWorkflow };
+export { recruitWorkflowV3 };

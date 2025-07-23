@@ -71,49 +71,63 @@ const AgentTrigger = createStep({
   },
 });
 
-// const deduplicateNewlyArrivedMails = createStep({
-//   id: "deduplicate-newly-arrived-mails",
-//   description: "Deduplicates newly arrived emails",
-//   inputSchema: z
-//     .object({
-//       emailId: z.string().nullable().optional(),
-//       threadId: z.string().nullable().optional(),
-//     })
-//     .describe("Email ID and thread ID to deduplicate"),
-//   outputSchema: z
-//     .object({
-//       emailId: z.string(),
-//       threadId: z.string(),
-//     })
-//     .nullable()
+const deduplicateNewlyArrivedMails = createStep({
+  id: "deduplicate-newly-arrived-mails",
+  description: "Deduplicates newly arrived emails",
+  inputSchema: z
+    .array(
+      z.object({
+        emailId: z.string().nullable().optional(),
+        threadId: z.string().nullable().optional(),
+      })
+    )
+    .describe("Email ID and thread ID array to deduplicate"),
+  outputSchema: z
+    .array(
+      z.object({
+        emailId: z.string().nullable().optional(),
+        threadId: z.string().nullable().optional(),
+      })
+    )
+    .describe("Email ID and thread ID deduplicated"),
 
-//     .describe("Email ID and thread ID deduplicated"),
-//   execute: async ({ inputData: { emailId, threadId } }) => {
-//     if (!emailId || !threadId) {
-//       console.log(
-//         "Email ID or thread ID not found for deduplicate-newly-arrived-mails step"
-//       );
-//       return null;
-//     }
+  execute: async ({ inputData }) => {
+    if (!inputData) {
+      console.log(
+        "Email ID or thread ID not found for deduplicate-newly-arrived-mails step"
+      );
+      return [];
+    }
 
-//     try {
-//       const alreadyProcessed = await redis.get(`processed_email:${emailId}`);
-//       if (alreadyProcessed) {
-//         console.log(`Email ID ${emailId} already processed, skipping`);
-//         return null;
-//       }
+    const deduplicatedEmails: { emailId: string; threadId: string }[] = [];
+    for (let mail of inputData) {
+      if (!mail || !mail.emailId || !mail.threadId) continue;
 
-//       await redis.set(`processed_email:${emailId}`, "1", "EX", 3600);
-//       return {
-//         emailId,
-//         threadId,
-//       };
-//     } catch (err) {
-//       console.log(err);
-//       return null;
-//     }
-//   },
-// });
+      const { emailId, threadId } = mail;
+
+      try {
+        const alreadyProcessed = await redis.get(
+          `processed_thread:${threadId}`
+        );
+        if (alreadyProcessed) {
+          console.log(`Thread ID ${threadId} already processed, skipping`);
+          continue;
+        }
+
+        await redis.set(`processed_thread:${threadId}`, "1", "EX", 3600);
+        deduplicatedEmails.push({
+          emailId,
+          threadId,
+        });
+      } catch (err) {
+        console.log(err);
+        continue;
+      }
+    }
+
+    return deduplicatedEmails;
+  },
+});
 
 const ExtractEmailMetaDataOutput = z
   .object({
@@ -450,15 +464,29 @@ const analyzeRejectedApplicants = createStep({
           result.text
         );
 
-        applicantsData.push({
-          ...emailMetaData,
-          hasCoverLetter,
-          hasResume,
-          position: jobPosition.job_title || "unclear",
-        });
+        if (
+          !hasCoverLetter ||
+          !hasResume ||
+          jobPosition.job_title === "unclear" ||
+          !jobPosition.job_title
+        ) {
+          rejectedApplicantsData.push({
+            ...emailMetaData,
+            hasCoverLetter,
+            hasResume,
+            position: jobPosition.job_title || "unclear",
+          });
+        } else {
+          applicantsData.push({
+            ...emailMetaData,
+            hasCoverLetter,
+            hasResume,
+            position: jobPosition.job_title || "unclear",
+          });
+        }
       } catch (err) {
         console.log("error occured while extracting job title", err);
-        applicantsData.push({
+        rejectedApplicantsData.push({
           ...emailMetaData,
           hasCoverLetter,
           hasResume,
@@ -528,7 +556,7 @@ const migrateConfirmedApplicants = createStep({
       if (!mail.userEmail) continue;
 
       const applicationCategory = mail.position
-        ? `${mail.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS}`
+        ? `${mail.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
         : "";
 
       const confirmationMailResp = await sendThreadReplyEmail({
@@ -563,7 +591,72 @@ const rejectApplications = createStep({
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
   execute: async ({ inputData }) => {
     const { rejectedApplicantsData } = inputData;
-    return "rejectedApplicants";
+    for (let mail of rejectedApplicantsData) {
+      if (!mail.userEmail) continue;
+
+      const missingResume = !mail.hasResume;
+      const missingCoverLetter = !mail.hasCoverLetter;
+      const unclearPosition = !mail.position || mail.position === "unclear";
+      const missingDetailsCount = [
+        missingResume,
+        missingCoverLetter,
+        unclearPosition,
+      ].filter(Boolean).length;
+
+      if (missingDetailsCount > 1) {
+        await sendThreadReplyEmail({
+          name: mail.name || "",
+          position: mail.position || "unclear",
+          userEmail: mail.userEmail,
+          subject: mail.subject,
+          threadId: mail.threadId,
+          emailId: mail.emailId,
+          templateId: "templates-rejection-missing_multiple_details",
+          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+          removeLabelIds: ["INBOX"],
+        });
+      } else if (missingResume) {
+        await sendThreadReplyEmail({
+          name: mail.name || "",
+          position: mail.position || "unclear",
+          userEmail: mail.userEmail,
+          subject: mail.subject,
+          threadId: mail.threadId,
+          emailId: mail.emailId,
+          templateId: "templates-rejection-no_resume",
+          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+          removeLabelIds: ["INBOX"],
+        });
+      } else if (missingCoverLetter) {
+        await sendThreadReplyEmail({
+          name: mail.name || "",
+          position: mail.position || "unclear",
+          userEmail: mail.userEmail,
+          subject: mail.subject,
+          threadId: mail.threadId,
+          emailId: mail.emailId,
+          templateId: "templates-rejection-no_cover_letter",
+          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+          removeLabelIds: ["INBOX"],
+        });
+      } else if (unclearPosition) {
+        await sendThreadReplyEmail({
+          name: mail.name || "",
+          position: mail.position || "unclear",
+          userEmail: mail.userEmail,
+          subject: mail.subject,
+          threadId: mail.threadId,
+          emailId: mail.emailId,
+          templateId: "templates-rejection-no_clear_job_position",
+          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
+          removeLabelIds: ["INBOX"],
+        });
+      } else {
+        continue;
+      }
+    }
+
+    return "applicants rejected successfully and migrated to rejected applicants";
   },
 });
 
@@ -580,6 +673,7 @@ const trackReplyMailsWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
+  .then(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
   .then(sortReplyEmails)
   .branch([
@@ -596,13 +690,13 @@ const trackReplyMailsWorkflow = createWorkflow({
   .then(mergeResults)
   .branch([
     [
-      async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
-      migrateConfirmedApplicants,
-    ],
-    [
       async ({ inputData: { rejectedApplicantsData } }) =>
         rejectedApplicantsData.length > 0,
       rejectApplications,
+    ],
+    [
+      async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
+      migrateConfirmedApplicants,
     ],
   ]);
 

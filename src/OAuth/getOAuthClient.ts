@@ -1,5 +1,5 @@
-import { google } from 'googleapis';
-import * as readline from 'readline';
+import { google } from "googleapis";
+import * as readline from "readline";
 
 // import { config } from 'dotenv';
 // import path from 'path';
@@ -16,14 +16,12 @@ let memoryTokens: {
 export async function getOAuth2Client(): Promise<any> {
   if (cachedOAuth2Client) return cachedOAuth2Client;
 
-  const enviroment = process.env.NODE_ENV;
-  const REDIRECT_URL =
-    enviroment === 'development' ? process.env.GOOGLE_REDIRECT_LOCAL_URI : process.env.GOOGLE_REDIRECT_URI;
+  const REDIRECT_URL = process.env.GOOGLE_REDIRECT_URI;
 
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    REDIRECT_URL,
+    REDIRECT_URL
   );
 
   const refresh_token = process.env.GOOGLE_REFRESH_TOKEN;
@@ -35,17 +33,17 @@ export async function getOAuth2Client(): Promise<any> {
       });
     } else {
       const authUrl = oAuth2Client.generateAuthUrl({
-        access_type: 'offline',
+        access_type: "offline",
         scope: [
-          'https://www.googleapis.com/auth/gmail.readonly',
-          'https://www.googleapis.com/auth/gmail.send',
-          'https://www.googleapis.com/auth/gmail.modify',
-          'https://www.googleapis.com/auth/gmail.labels',
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.send",
+          "https://www.googleapis.com/auth/gmail.modify",
+          "https://www.googleapis.com/auth/gmail.labels",
         ],
-        prompt: 'consent',
+        prompt: "consent",
       });
 
-      console.log('\n🔑 Authorize this app by visiting this URL:\n', authUrl);
+      console.log("\n🔑 Authorize this app by visiting this URL:\n", authUrl);
 
       const rl = readline.createInterface({
         input: process.stdin,
@@ -53,10 +51,10 @@ export async function getOAuth2Client(): Promise<any> {
       });
 
       const code: string = await new Promise((resolve, reject) => {
-        rl.question('\n📥 Enter the code from that page here: ', (code) => {
+        rl.question("\n📥 Enter the code from that page here: ", (code) => {
           rl.close();
           if (code) resolve(code);
-          else reject(new Error('Authorization code not provided'));
+          else reject(new Error("Authorization code not provided"));
         });
       });
 
@@ -68,26 +66,25 @@ export async function getOAuth2Client(): Promise<any> {
         access_token: tokens.access_token!,
       };
 
-      console.log('✅ Tokens obtained and stored in memory', memoryTokens);
+      console.log("✅ Tokens obtained and stored in memory", memoryTokens);
     }
 
     // Auto-refresh event
-    oAuth2Client.on('tokens', (tokens) => {
+    oAuth2Client.on("tokens", (tokens) => {
       if (tokens.access_token) {
         memoryTokens.access_token = tokens.access_token;
-        console.log('🔄 Access token refreshed');
+        console.log("🔄 Access token refreshed");
       }
       if (tokens.refresh_token) {
         memoryTokens.refresh_token = tokens.refresh_token;
-        console.log('🔄 Refresh token updated');
+        console.log("🔄 Refresh token updated");
       }
     });
 
     cachedOAuth2Client = oAuth2Client;
     return oAuth2Client;
   } catch (error) {
-    console.error('❌ Failed to authenticate with Google OAuth2:', error);
+    console.error("❌ Failed to authenticate with Google OAuth2:", error);
     throw error;
   }
 }
-

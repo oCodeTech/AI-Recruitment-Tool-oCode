@@ -294,7 +294,7 @@ export const sendThreadReplyEmail = async ({
   templateId,
   addLabelIds,
   removeLabelIds,
-}: ConfirmationEmailProps) => {
+}: ConfirmationEmailProps): Promise<gmail_v1.Schema$Message> => {
   try {
     const confirmationTemplateMail = await getDraftTemplate({
       userId: "me",
@@ -303,7 +303,7 @@ export const sendThreadReplyEmail = async ({
 
     if (!confirmationTemplateMail) {
       console.log("No template found");
-      return "No template found";
+      return {id:"", threadId: "", labelIds: []} as gmail_v1.Schema$Message;
     }
 
     const plainTextPart = confirmationTemplateMail.payload?.parts?.find(
@@ -317,11 +317,11 @@ export const sendThreadReplyEmail = async ({
         "[Job Title]",
         position && position !== "unclear" ? position : "applied"
       )
-      .replaceAll("[Company Name]", "Ocode Technologies");
+      .replaceAll("[Company Name]", "oCode Technologies");
 
     const sendMailResp = await sendEmail({
       to: userEmail,
-      subject: `Re: ${subject}`,
+      subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,
       body: replyMail,
       threadId: threadId,
     });
@@ -338,6 +338,6 @@ export const sendThreadReplyEmail = async ({
     return sendMailResp;
   } catch (err) {
     console.log(err);
-    return err;
+    return {id: "", threadId: "", labelIds: []} as gmail_v1.Schema$Message;
   }
 };

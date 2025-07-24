@@ -6,34 +6,41 @@ import {
   getLabelNames,
   getThreadMessages,
   gmailSearchEmails,
-  getDraftTemplate,
-  modifyEmailLabels,
-  sendEmail,
   sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
 import { gmail_v1 } from "googleapis";
+import { decodeEmailBody, extractJsonFromResult } from "./recruit-workflowV3";
+
+interface ApplicantKeyDetails {
+  position: string;
+  currentCTC: string;
+  expectedCTC: string;
+  workExp: string;
+  interviewTime: string;
+  location: string;
+  education?: string;
+  contact?: string;
+  linkedIn?: string;
+  facebook?: string;
+  callTime?: string;
+  resume?: string;
+  agreement: string;
+
+  // tech experienced
+  lastAppraisal?: string;
+  switchingReason?: string;
+  totalWorkExp?: string;
+  currLoc?: string;
+  github?: string;
+  stackOverflow?: string;
+}
 
 const recruitmentMail = process.env.RECRUITMENT_MAIL;
 
 if (!recruitmentMail) {
   throw new Error("RECRUITMENT_MAIL environment variable is not set");
 }
-const decodeEmailBody = (
-  encodedBody: gmail_v1.Schema$MessagePart | undefined
-) => {
-  const bodyEncoded = encodedBody?.body?.data || "";
-  return Buffer.from(bodyEncoded, "base64").toString("utf8");
-};
-
-const extractJsonFromResult = (result: string) => {
-  try {
-    return result ? JSON.parse(result.match(/{.*}/s)?.[0] ?? "{}") : null;
-  } catch (e) {
-    console.log("Error parsing result:", e);
-    return null;
-  }
-};
 
 const AgentTrigger = createStep({
   id: "agent-trigger",
@@ -56,7 +63,7 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `(label:APPLICANTS OR label:REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS) -label:DRAFT is:unread`,
+      q: `label:APPLICANTS OR label:REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS`,
       maxResults: 100,
     };
     try {
@@ -158,16 +165,22 @@ const extractEmailMetaData = createStep({
     try {
       const { emailId, threadId } = inputData;
 
-      const email = await getEmailContent(emailId!);
+      const originalEmail = await getEmailContent(emailId!);
+      const threadMessages = (await getThreadMessages(threadId!)) || [];
 
-      const labels = await getLabelNames(email.labelIds || []);
+      const latestThreadEmail = threadMessages[threadMessages.length - 1];
+      if (!latestThreadEmail || !originalEmail) {
+        return null;
+      }
 
-      const userEmail = email.payload?.headers
+      const labels = await getLabelNames(originalEmail.labelIds || []);
+
+      const userEmail = latestThreadEmail.payload?.headers
         ?.find((h) => h.name === "From")
         ?.value?.split("<")[1]
         ?.replace(">", "");
 
-      const username = email.payload?.headers
+      const username = latestThreadEmail.payload?.headers
         ?.find((h) => h.name === "From")
         ?.value?.split("<")[0]
         .trim();
@@ -176,8 +189,8 @@ const extractEmailMetaData = createStep({
         return null;
 
       const emailMetaData = {
-        emailId: email.id || emailId || "",
-        threadId: email.threadId || threadId || "",
+        emailId: latestThreadEmail.id || emailId || "",
+        threadId: latestThreadEmail.threadId || threadId || "",
         labels: labels || [],
       };
 
@@ -190,7 +203,6 @@ const extractEmailMetaData = createStep({
       if (!filteredEmails) {
         return null;
       }
-
       return emailMetaData;
     } catch (err) {
       console.log(err);
@@ -243,15 +255,56 @@ const sortReplyEmails = createStep({
   },
 });
 
+const analyzeApplicantsOutput = z.object({
+  emailId: z.string(),
+  threadId: z.string(),
+  labels: z.array(z.string()),
+  userEmail: z.string().nullable(),
+  name: z.string().nullable(),
+  subject: z.string().nullable(),
+  body: z.string(),
+  keyDetails: z
+    .object({
+      position: z.string(),
+      currentCTC: z.string(),
+      expectedCTC: z.string(),
+      workExp: z.string(),
+      interviewTime: z.string(),
+      location: z.string(),
+      agreement: z.string(),
+      education: z.string().optional(),
+      contact: z.string().optional(),
+      linkedIn: z.string().optional(),
+      facebook: z.string().optional(),
+      callTime: z.string().optional(),
+      resume: z.string().optional(),
+
+      lastAppraisal: z.string().optional(),
+      switchingReason: z.string().optional(),
+      totalWorkExp: z.string().optional(),
+      currLoc: z.string().optional(),
+      github: z.string().optional(),
+      stackOverflow: z.string().optional(),
+    })
+    .optional(),
+});
+
 const analyzeApplicants = createStep({
   id: "analyze-applicants",
   description: "Analyzes applicants",
   inputSchema: sortReplyEmailsOutput,
-  outputSchema: z.string().describe("Final output of the recruitment workflow"),
-  execute: async ({ inputData: { applicants } }) => {
+  outputSchema: z.object({
+    applicantsData: z.array(analyzeApplicantsOutput),
+    rejectedApplicantsData: z.array(analyzeApplicantsOutput),
+  }),
+  execute: async ({ inputData: { applicants }, mastra }) => {
     if (!applicants || !applicants.length) {
       throw Error("Applicant mails not found");
     }
+
+    const applicantsData: z.infer<typeof analyzeApplicantsOutput>[] = [];
+    const rejectedApplicantsData: z.infer<typeof analyzeApplicantsOutput>[] =
+      [];
 
     for (let mail of applicants) {
       if (!mail || !mail.threadId) continue;
@@ -262,9 +315,112 @@ const analyzeApplicants = createStep({
 
       const latestThreadMessage = threadMessages[threadMessages.length - 1];
 
-      // console.log("Latest thread message of applicant", latestThreadMessage);
+      // --------------------------------------------------------------------
+      // DATA EXTRACTION
+
+      const userEmail = latestThreadMessage.payload?.headers
+        ?.find((h) => h.name === "From")
+        ?.value?.split("<")[1]
+        ?.replace(">", "");
+
+      const name = latestThreadMessage.payload?.headers
+        ?.find((h) => h.name === "From")
+        ?.value?.split("<")[0]
+        .trim();
+
+      if (userEmail === recruitmentMail || name === recruitmentMail) continue;
+
+      const subject = latestThreadMessage.payload?.headers?.find(
+        (h) => h.name === "Subject"
+      )?.value;
+
+      const plainTextPart =
+        latestThreadMessage.payload?.parts
+          ?.find((p) => p.mimeType === "multipart/alternative")
+          ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
+        latestThreadMessage.payload?.parts?.find(
+          (p) => p.mimeType === "text/plain"
+        );
+
+      const decodedBody = decodeEmailBody(plainTextPart);
+
+      const gmailGroqAgent = mastra.getAgent("gmailGroqAgent");
+
+      const emailMetaData: z.infer<typeof analyzeApplicantsOutput> = {
+        emailId: latestThreadMessage.id || "",
+        threadId: latestThreadMessage.threadId || "",
+        labels: mail.labels,
+        userEmail: userEmail ?? null,
+        name: name ?? null,
+        subject: subject ?? null,
+        body: decodedBody ?? null,
+      };
+
+      if (!gmailGroqAgent) throw Error("Groq Agent not found");
+
+      try {
+        const result = await gmailGroqAgent.generate(
+          `Extract key details from the following email body:\n\n${
+            decodedBody.split("On")[0]
+          }`,
+          {
+            instructions: `
+You are an AI agent tasked with analyzing email bodies and extracting specific key details.
+
+Required fields: Always include these in the output JSON, even if the value is "N/A" (Not Applicable) or "unclear" (ambiguous).
+- position: string
+- currentCTC: string
+- expectedCTC: string
+- workExp: string
+- interviewTime: string
+- location: string
+- agreement: string
+
+Optional fields: Only include these in the output JSON if they are mentioned in the email body. If mentioned but the value is not clear, set to "unclear". If mentioned but the value is missing, set to "Not Provided". If not mentioned at all, omit the field from the output.
+- education
+- contact
+- linkedIn
+- facebook
+- callTime
+- resume
+- lastAppraisal
+- switchingReason
+- totalWorkExp
+- currLoc
+- github
+- stackOverflow
+
+Return the result as a JSON object with the required fields and any optional fields that are present in the email body.
+    `,
+            maxSteps: 20,
+            maxTokens: 1000,
+          }
+        );
+        const extractedDetails: ApplicantKeyDetails = extractJsonFromResult(
+          result.text
+        );
+
+        const missingKeyDetails = Object.values(extractedDetails).some(
+          (value) => value === "Not Provided" || value === "unclear"
+        );
+
+        if (missingKeyDetails) {
+          rejectedApplicantsData.push(emailMetaData);
+          continue;
+        }
+
+        emailMetaData.keyDetails = extractedDetails;
+
+        applicantsData.push(emailMetaData);
+      } catch (e) {
+        console.error("Error extracting key details from email:", e);
+        rejectedApplicantsData.push(emailMetaData);
+      }
     }
-    return "";
+    return {
+      applicantsData,
+      rejectedApplicantsData,
+    };
   },
 });
 
@@ -510,15 +666,28 @@ const mergeResults = createStep({
       applicantsData: z.array(analyzeApplicantionOutput),
       rejectedApplicantsData: z.array(analyzeApplicantionOutput),
     }),
-    "analyze-applicants": z.string(),
+    "analyze-applicants": z.object({
+      applicantsData: z.array(analyzeApplicantsOutput),
+      rejectedApplicantsData: z.array(analyzeApplicantsOutput),
+    }),
   }),
   outputSchema: z
     .object({
+      applicantsWithKeys: z.array(analyzeApplicantsOutput),
+      rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
       applicantsData: z.array(analyzeApplicantionOutput),
       rejectedApplicantsData: z.array(analyzeApplicantionOutput),
     })
     .describe("Final output of the recruitment workflow"),
   execute: async ({ inputData }) => {
+    if (Object.keys(inputData).length === 0) {
+      return {
+        applicantsWithKeys: [],
+        rejectedWithoutKeys: [],
+        applicantsData: [],
+        rejectedApplicantsData: [],
+      };
+    }
     const analyzeRejectedApplicants = inputData["analyze-rejected-applicants"];
     const analyzeApplicants = inputData["analyze-applicants"];
 
@@ -531,13 +700,92 @@ const mergeResults = createStep({
         ? analyzeRejectedApplicants.rejectedApplicantsData
         : [];
 
-    // TODO: work on this later, and create a new branch for this
-    const applicants = analyzeApplicants;
+    const applicantsWithKeys =
+      analyzeApplicants?.applicantsData?.length > 0
+        ? analyzeApplicants.applicantsData
+        : [];
+
+    const rejectedWithoutKeys =
+      analyzeApplicants?.rejectedApplicantsData?.length > 0
+        ? analyzeApplicants.rejectedApplicantsData
+        : [];
 
     return {
+      applicantsWithKeys,
+      rejectedWithoutKeys,
       applicantsData,
       rejectedApplicantsData,
     };
+  },
+});
+
+const migrateApplicantsWithKeyDetails = createStep({
+  id: "migrate-applicants-with-key-details",
+  description: "Migrates applicants with key details to next phase",
+  inputSchema: z.object({
+    applicantsWithKeys: z.array(analyzeApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
+    applicantsData: z.array(analyzeApplicantionOutput),
+    rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+  }),
+  outputSchema: z.string().describe("Final output of the recruitment workflow"),
+  execute: async ({ inputData: { applicantsWithKeys } }) => {
+    for (let mail of applicantsWithKeys) {
+      if (!mail.userEmail) continue;
+
+      // const applicationCategory = mail.keyDetails?.position
+      //   ? `${mail.keyDetails?.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
+      //   : "";
+
+      // const confirmationMailResp = await sendThreadReplyEmail({
+      //   name: mail.name || "",
+      //   position: mail.keyDetails?.position || "unclear",
+      //   userEmail: mail.userEmail,
+      //   subject: mail.subject,
+      //   threadId: mail.threadId,
+      //   emailId: mail.emailId,
+      //   templateId: "templates-confirmation-job_application_received",
+      //   addLabelIds: [applicationCategory, "APPLICANTS"],
+      //   removeLabelIds: [
+      //     "INBOX",
+      //     "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+      //   ],
+      // });
+
+      console.log("mail with key details", mail);
+    }
+
+    return "applicants with key details migrated successfully";
+  },
+});
+
+const informToResend = createStep({
+  id: "inform-to-resend",
+  description: "informs the applicant to re-apply with required details",
+  inputSchema: z.object({
+    applicantsWithKeys: z.array(analyzeApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
+    applicantsData: z.array(analyzeApplicantionOutput),
+    rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+  }),
+  outputSchema: z.string().describe("Final output of the recruitment workflow"),
+  execute: async ({ inputData: { rejectedWithoutKeys } }) => {
+    for (let mail of rejectedWithoutKeys) {
+      if (!mail.userEmail) continue;
+
+      const confirmationMailResp = await sendThreadReplyEmail({
+        name: mail.name || "",
+        position: mail.keyDetails?.position || "unclear",
+        userEmail: mail.userEmail,
+        subject: "Missing Details for Your Application",
+        threadId: mail.threadId,
+        emailId: mail.emailId,
+        templateId: "templates-request_key_details-resend_key_details",
+        removeLabelIds: ["INBOX"],
+      });
+    }
+
+    return "Applicants informed to re-apply with required details mails sent";
   },
 });
 
@@ -545,13 +793,13 @@ const migrateConfirmedApplicants = createStep({
   id: "migrate-confirmed-applicants",
   description: "Migrates confirmed applicants",
   inputSchema: z.object({
+    applicantsWithKeys: z.array(analyzeApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
     applicantsData: z.array(analyzeApplicantionOutput),
     rejectedApplicantsData: z.array(analyzeApplicantionOutput),
   }),
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
-  execute: async ({ inputData }) => {
-    const { applicantsData } = inputData;
-
+  execute: async ({ inputData: { applicantsData } }) => {
     for (let mail of applicantsData) {
       if (!mail.userEmail) continue;
 
@@ -581,16 +829,17 @@ const migrateConfirmedApplicants = createStep({
   },
 });
 
-const rejectApplications = createStep({
-  id: "reject-applications",
-  description: "Rejects applications",
+const informToReApply = createStep({
+  id: "inform-to-re-apply",
+  description: "informs the applicant to re-apply with required details",
   inputSchema: z.object({
+    applicantsWithKeys: z.array(analyzeApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
     applicantsData: z.array(analyzeApplicantionOutput),
     rejectedApplicantsData: z.array(analyzeApplicantionOutput),
   }),
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
-  execute: async ({ inputData }) => {
-    const { rejectedApplicantsData } = inputData;
+  execute: async ({ inputData: { rejectedApplicantsData } }) => {
     for (let mail of rejectedApplicantsData) {
       if (!mail.userEmail) continue;
 
@@ -690,9 +939,19 @@ const trackReplyMailsWorkflow = createWorkflow({
   .then(mergeResults)
   .branch([
     [
+      async ({ inputData: { applicantsWithKeys } }) =>
+        applicantsWithKeys.length > 0,
+      migrateApplicantsWithKeyDetails,
+    ],
+    [
+      async ({ inputData: { rejectedWithoutKeys } }) =>
+        rejectedWithoutKeys.length > 0,
+      informToResend,
+    ],
+    [
       async ({ inputData: { rejectedApplicantsData } }) =>
         rejectedApplicantsData.length > 0,
-      rejectApplications,
+      informToReApply,
     ],
     [
       async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
@@ -702,35 +961,4 @@ const trackReplyMailsWorkflow = createWorkflow({
 
 trackReplyMailsWorkflow.commit();
 
-// const executeRecruitWorkflow = async () => {
-//   try {
-//     const workflowId = "recruitWorkflowV3";
-
-//     const res = await fetch(
-//       `http://localhost:4112/api/workflows/${workflowId}/start-async`,
-//       {
-//         method: "POST",
-//         headers: {
-//           "Content-Type": "application/json",
-//         },
-//         body: JSON.stringify({
-//           inputData: true,
-//         }),
-//       }
-//     );
-
-//     console.log(
-//       "Successfully sent signal to start the workflow:",
-//       res.status,
-//       res.statusText
-//     );
-//   } catch (error) {
-//     console.error("Error sending signal to start the workflow:", error);
-//     return;
-//   }
-// };
-
-export {
-  trackReplyMailsWorkflow,
-  //  executeRecruitWorkflow
-};
+export { trackReplyMailsWorkflow };

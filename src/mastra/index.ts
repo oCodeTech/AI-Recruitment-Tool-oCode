@@ -13,6 +13,9 @@ import express from "express";
 import cron from "node-cron";
 import { trackReplyMailsWorkflow } from "./workflows/track-reply-mails-workflow";
 import { contextQAAgent } from "./agents/contextQA-agent";
+import { webCrawlerAgent } from "./agents/webCrawler-agent";
+import { ragAgent } from "./agents/rag-Agent";
+import { jobCrawlerWorkflow } from "./workflows/job-crawler-workflow";
 
 const app = express();
 const port = process.env.NODE_PORT || 5000;
@@ -28,8 +31,11 @@ export const mastra = new Mastra({
     // current recruit workflow
     recruitWorkflowV3,
     trackReplyMailsWorkflow,
+    jobCrawlerWorkflow
   },
-  agents: { gmailMetaAgent, gmailGroqAgent, contextQAAgent },
+  agents: { gmailMetaAgent, gmailGroqAgent, contextQAAgent, 
+    webCrawlerAgent, ragAgent
+   },
   storage: new LibSQLStore({
     // stores telemetry, evals, ... into memory storage, if it needs to persist, change to file:../mastra.db
     url: "file:../mastra.db",

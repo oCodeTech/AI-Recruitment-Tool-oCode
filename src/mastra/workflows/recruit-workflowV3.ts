@@ -16,21 +16,25 @@ const recruitmentMail = process.env.RECRUITMENT_MAIL;
 if (!recruitmentMail) {
   throw new Error("RECRUITMENT_MAIL environment variable is not set");
 }
-const decodeEmailBody = (
+export const decodeEmailBody = (
   encodedBody: gmail_v1.Schema$MessagePart | undefined
 ) => {
   const bodyEncoded = encodedBody?.body?.data || "";
   return Buffer.from(bodyEncoded, "base64").toString("utf8");
 };
 
-const extractJsonFromResult = (result: string) => {
-  try {
-    return result ? JSON.parse(result.match(/{.*}/s)?.[0] ?? "{}") : null;
-  } catch (e) {
-    console.log("Error parsing result:", e);
-    return null;
+export const extractJsonFromResult = (result: string) => {
+  const match = result.match(/\{.*\}/s);
+  if (match) {
+    try {
+      return JSON.parse(match[0]);
+    } catch (e) {
+      console.log("Error parsing result:", e);
+    }
   }
+  return null;
 };
+
 const AgentTrigger = createStep({
   id: "agent-trigger",
   description:
@@ -245,6 +249,8 @@ const extractEmailMetaData = createStep({
             containsKeyword({
               text: decodedBody || "",
               keywords: [
+                "resume",
+                "Resume",
                 "resume attached",
                 "cv attached",
                 "please find my resume",

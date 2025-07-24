@@ -3,7 +3,7 @@ import { getGmailClient } from "../OAuth/gmailClient";
 
 interface EmailData {
   to: string | null;
-  subject: string;
+  subject: string | null;
   body: string;
   threadId?: string;
 }
@@ -273,8 +273,8 @@ interface ConfirmationEmailProps {
   threadId: string;
   emailId: string;
   templateId: string;
-  addLabelIds: string[];
-  removeLabelIds: string[];
+  addLabelIds?: string[];
+  removeLabelIds?: string[];
 }
 
 const decodeEmailBody = (
@@ -303,7 +303,7 @@ export const sendThreadReplyEmail = async ({
 
     if (!confirmationTemplateMail) {
       console.log("No template found");
-      return {id:"", threadId: "", labelIds: []} as gmail_v1.Schema$Message;
+      return { id: "", threadId: "", labelIds: [] } as gmail_v1.Schema$Message;
     }
 
     const plainTextPart = confirmationTemplateMail.payload?.parts?.find(
@@ -321,7 +321,7 @@ export const sendThreadReplyEmail = async ({
 
     const sendMailResp = await sendEmail({
       to: userEmail,
-      subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,
+      subject: subject,
       body: replyMail,
       threadId: threadId,
     });
@@ -330,14 +330,14 @@ export const sendThreadReplyEmail = async ({
       await modifyEmailLabels({
         emailId: emailId,
         threadId: threadId,
-        addLabelIds,
-        removeLabelIds,
+        addLabelIds: addLabelIds || [],
+        removeLabelIds: removeLabelIds || [],
       });
     }
 
     return sendMailResp;
   } catch (err) {
     console.log(err);
-    return {id: "", threadId: "", labelIds: []} as gmail_v1.Schema$Message;
+    return { id: "", threadId: "", labelIds: [] } as gmail_v1.Schema$Message;
   }
 };

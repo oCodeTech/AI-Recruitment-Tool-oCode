@@ -5,7 +5,9 @@ interface EmailData {
   to: string | null;
   subject: string | null;
   body: string;
-  threadId?: string;
+  inReplyTo?: string;
+  references?: string[];
+  threadId: string;
 }
 
 const gmailClient = await getGmailClient();
@@ -113,12 +115,7 @@ export const gmailSearchEmails = async (searchProps: {
       ...searchProps,
     });
 
-    return (
-      res.data.messages?.map((message) => ({
-        emailId: message.id,
-        threadId: message.threadId,
-      })) || []
-    );
+    return res.data.messages || [];
   } catch (error) {
     throw error;
   }
@@ -168,14 +165,33 @@ export const getDraftTemplate = async (searchProps: {
   }
 };
 
-export const sendEmail = async ({ to, subject, body, threadId }: EmailData) => {
-  if (!to || !subject || !body) {
+export const sendEmail = async ({
+  to,
+  subject,
+  body,
+  inReplyTo,
+  references,
+  threadId,
+}: EmailData) => {
+  if (!to || !subject || !body || !threadId) {
     throw new Error("Email data is required");
   }
 
-  const rawMessage = Buffer.from(
-    `To: ${to}\r\nSubject: ${subject}\r\n\r\n${body}`
-  )
+  if (typeof threadId !== "string" || threadId.trim() === "") {
+    throw new Error("Invalid threadId");
+  }
+
+  let headers = `To: ${to}\r\nSubject: ${subject}`;
+
+  if (inReplyTo) {
+    headers += `\r\nIn-Reply-To: ${inReplyTo}`;
+  }
+
+  if (references && references.length > 0) {
+    headers += `\r\nReferences: ${references.join(" ")}`;
+  }
+
+  const rawMessage = Buffer.from(`${headers}\r\n\r\n${body}`)
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
@@ -184,7 +200,10 @@ export const sendEmail = async ({ to, subject, body, threadId }: EmailData) => {
   try {
     const response = await gmailClient.users.messages.send({
       userId: "me",
-      requestBody: { raw: rawMessage, threadId: threadId },
+      requestBody: {
+        raw: rawMessage,
+        threadId: threadId,
+      },
     });
 
     return response.data;
@@ -272,6 +291,8 @@ interface ConfirmationEmailProps {
   subject: string | null;
   threadId: string;
   emailId: string;
+  inReplyTo: string;
+  references: string[];
   templateId: string;
   addLabelIds?: string[];
   removeLabelIds?: string[];
@@ -291,27 +312,29 @@ export const sendThreadReplyEmail = async ({
   subject,
   threadId,
   emailId,
+  inReplyTo,
+  references,
   templateId,
   addLabelIds,
   removeLabelIds,
 }: ConfirmationEmailProps): Promise<gmail_v1.Schema$Message> => {
   try {
-    const confirmationTemplateMail = await getDraftTemplate({
+    const templateMail = await getDraftTemplate({
       userId: "me",
       q: `is:draft label:${templateId}`,
     });
 
-    if (!confirmationTemplateMail) {
+    if (!templateMail) {
       console.log("No template found");
       return { id: "", threadId: "", labelIds: [] } as gmail_v1.Schema$Message;
     }
 
-    const plainTextPart = confirmationTemplateMail.payload?.parts?.find(
+    const plainTextPart = templateMail.payload?.parts?.find(
       (p) => p.mimeType === "text/plain"
     );
-    const confirmationMailTemplate = decodeEmailBody(plainTextPart);
+    const templateMailBody = decodeEmailBody(plainTextPart);
 
-    const replyMail = confirmationMailTemplate
+    const replyMail = templateMailBody
       .replaceAll("[Candidate Name]", name ? name : "Candidate")
       .replaceAll(
         "[Job Title]",
@@ -323,6 +346,8 @@ export const sendThreadReplyEmail = async ({
       to: userEmail,
       subject: subject,
       body: replyMail,
+      inReplyTo: inReplyTo,
+      references: references,
       threadId: threadId,
     });
 

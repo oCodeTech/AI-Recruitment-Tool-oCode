@@ -43,7 +43,7 @@ const AgentTrigger = createStep({
   outputSchema: z
     .array(
       z.object({
-        emailId: z.string().nullable().optional(),
+        id: z.string().nullable().optional(),
         threadId: z.string().nullable().optional(),
       })
     )
@@ -51,12 +51,12 @@ const AgentTrigger = createStep({
   execute: async ({ inputData }) => {
     if (!inputData) {
       console.error("No signal found for agent-trigger step");
-      return [{ emailId: "", threadId: "" }];
+      return [{ id: "", threadId: "" }];
     }
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:INBOX -label:REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS is:unread`,
+      q: `label:INBOX -label:INCOMPLETE_APPLICATIONS is:unread`,
       maxResults: 100,
     };
 
@@ -66,7 +66,7 @@ const AgentTrigger = createStep({
       return searchResult;
     } catch (err) {
       console.log(err);
-      return [{ emailId: "", threadId: "" }];
+      return [{ id: "", threadId: "" }];
     }
   },
 });
@@ -76,20 +76,20 @@ const deduplicateNewlyArrivedMails = createStep({
   description: "Deduplicates newly arrived emails",
   inputSchema: z
     .object({
-      emailId: z.string().nullable().optional(),
+      id: z.string().nullable().optional(),
       threadId: z.string().nullable().optional(),
     })
     .describe("Email ID and thread ID to deduplicate"),
   outputSchema: z
     .object({
-      emailId: z.string(),
+      id: z.string(),
       threadId: z.string(),
     })
     .nullable()
 
     .describe("Email ID and thread ID deduplicated"),
-  execute: async ({ inputData: { emailId, threadId } }) => {
-    if (!emailId || !threadId) {
+  execute: async ({ inputData: { id, threadId } }) => {
+    if (!id || !threadId) {
       console.log(
         "Email ID or thread ID not found for deduplicate-newly-arrived-mails step"
       );
@@ -97,15 +97,15 @@ const deduplicateNewlyArrivedMails = createStep({
     }
 
     try {
-      const alreadyProcessed = await redis.get(`processed_email:${emailId}`);
+      const alreadyProcessed = await redis.get(`processed_email:${id}`);
       if (alreadyProcessed) {
-        console.log(`Email ID ${emailId} already processed, skipping`);
+        console.log(`Email ID ${id} already processed, skipping`);
         return null;
       }
 
-      await redis.set(`processed_email:${emailId}`, "1", "EX", 3600);
+      await redis.set(`processed_email:${id}`, "1", "EX", 3600);
       return {
-        emailId,
+        id,
         threadId,
       };
     } catch (err) {
@@ -117,7 +117,8 @@ const deduplicateNewlyArrivedMails = createStep({
 
 const ExtractEmailMetaDataOutput = z
   .object({
-    emailId: z.string(),
+    id: z.string(),
+    messageId: z.string(),
     threadId: z.string(),
     userEmail: z.string().nullable(),
     name: z.string().nullable(),
@@ -145,12 +146,8 @@ const extractEmailMetaData = createStep({
   description: "Extracts email metadata by email ID and thread ID",
   inputSchema: z
     .object({
-      emailId: z.string(),
+      id: z.string(),
       threadId: z.string(),
-
-      // temp for testing
-      // emailId: z.string().nullable().optional(),
-      // threadId: z.string().nullable().optional(),
     })
     .nullable()
     .describe("Email ID and thread ID to extract metadata"),
@@ -165,14 +162,17 @@ const extractEmailMetaData = createStep({
     }
 
     try {
-      const { emailId, threadId } = inputData;
+      const { id, threadId } = inputData;
 
       const threadMessages = await getThreadMessages(threadId);
 
       if (threadMessages && threadMessages.length > 1) return null;
 
-      const email = await getEmailContent(emailId!);
+      const email = await getEmailContent(id!);
 
+      const messageId = email.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "message-id"
+      )?.value;
       const userEmail = email.payload?.headers
         ?.find((h) => h.name === "From")
         ?.value?.split("<")[1]
@@ -201,7 +201,8 @@ const extractEmailMetaData = createStep({
         .map((p) => p.body?.attachmentId);
 
       const emailMetaData = {
-        emailId: emailId || email.id || "",
+        id: id || email.id || "",
+        messageId: messageId || "",
         threadId: threadId || email.threadId || "",
         userEmail: userEmail ?? null,
         name: name ?? null,
@@ -434,10 +435,11 @@ const sendMultipleRejectionReasonsMail = createStep({
         userEmail: mail.userEmail,
         subject: mail.subject,
         threadId: mail.threadId,
-        emailId: mail.emailId,
+        emailId: mail.id,
+        inReplyTo: mail.messageId,
+        references: [mail.messageId],
         templateId: "templates-rejection-missing_multiple_details",
-        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-        removeLabelIds: ["INBOX"],
+        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
       });
     }
 
@@ -468,10 +470,11 @@ const sendResumeMissingMail = createStep({
         userEmail: mail.userEmail,
         subject: mail.subject,
         threadId: mail.threadId,
-        emailId: mail.emailId,
+        emailId: mail.id,
+        inReplyTo: mail.messageId,
+        references: [mail.messageId],
         templateId: "templates-rejection-no_resume",
-        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-        removeLabelIds: ["INBOX"],
+        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
       });
     }
 
@@ -503,10 +506,11 @@ const sendCoverLetterMissingEmail = createStep({
         userEmail: mail.userEmail,
         subject: mail.subject,
         threadId: mail.threadId,
-        emailId: mail.emailId,
+        emailId: mail.id,
+        inReplyTo: mail.messageId,
+        references: [mail.messageId],
         templateId: "templates-rejection-no_cover_letter",
-        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-        removeLabelIds: ["INBOX"],
+        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
       });
     }
 
@@ -538,10 +542,11 @@ const sendUnclearPositionEmail = createStep({
         userEmail: mail.userEmail,
         subject: mail.subject,
         threadId: mail.threadId,
-        emailId: mail.emailId,
+        emailId: mail.id,
+        inReplyTo: mail.messageId,
+        references: [mail.messageId],
         templateId: "templates-rejection-no_clear_job_position",
-        addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-        removeLabelIds: ["INBOX"],
+        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
       });
     }
 
@@ -575,20 +580,44 @@ const sendConfirmationEmail = createStep({
         name: mail.name || "",
         position: mail.position || "unclear",
         userEmail: mail.userEmail,
-        subject: mail.subject,
+        subject: `Re: ${mail.subject}`,
         threadId: mail.threadId,
-        emailId: mail.emailId,
+        emailId: mail.id,
+        inReplyTo: mail.messageId,
+        references: [mail.messageId],
         templateId: "templates-confirmation-job_application_received",
         addLabelIds: [applicationCategory, "APPLICANTS"],
-        removeLabelIds: [
-          "INBOX",
-          "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
-        ],
+        removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
       });
 
       console.log("Confirmation email response:", confirmationEmailResp);
 
-      if (confirmationEmailResp?.labelIds?.includes("SENT")) {
+      if (
+        confirmationEmailResp?.labelIds?.includes("SENT") &&
+        confirmationEmailResp?.id &&
+        confirmationEmailResp?.threadId
+      ) {
+        const confirmationEmail = await getEmailContent(
+          confirmationEmailResp.id
+        );
+
+        if (!confirmationEmail) {
+          console.log("No confirmation email found");
+          continue;
+        }
+
+        const confirmationMessageId = confirmationEmail.payload?.headers?.find(
+          (h) => h.name && h.name.toLowerCase() === "message-id"
+        )?.value;
+
+        if (!confirmationMessageId) {
+          console.log(
+            "No confirmation message id found",
+            confirmationMessageId
+          );
+          continue;
+        }
+
         switch (mail.category) {
           case "TECH":
             const templateId =
@@ -600,31 +629,32 @@ const sendConfirmationEmail = createStep({
 
             if (!templateId || !mail.position || mail.position === "unclear") {
               await modifyEmailLabels({
-                emailId: mail.emailId,
+                emailId: mail.id,
                 addLabelIds: ["UNCLEAR_APPLICANTS"],
                 removeLabelIds: [
-                  "INBOX",
-                  "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+                  "INCOMPLETE_APPLICATIONS",
                 ],
               });
               continue;
             }
 
-            await sendThreadReplyEmail({
+            const result = await sendThreadReplyEmail({
               name: mail.name || "",
               position: mail.position || "unclear",
               userEmail: mail.userEmail,
-              subject:
-                "Application Acknowledged - Request for Additional Information",
+              subject: `Re: ${mail.subject}`,
               threadId: mail.threadId,
-              emailId: mail.emailId,
+              emailId: mail.id,
+              inReplyTo: mail.messageId,
+              references: [mail.messageId, confirmationMessageId],
               templateId: templateId,
               addLabelIds: [applicationCategory, "APPLICANTS"],
               removeLabelIds: [
-                "INBOX",
-                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+                "INCOMPLETE_APPLICATIONS",
               ],
             });
+
+            console.log("asking additional info result", result);
 
             break;
 
@@ -636,12 +666,13 @@ const sendConfirmationEmail = createStep({
               subject:
                 "Application Acknowledged - Request for Additional Information",
               threadId: mail.threadId,
-              emailId: mail.emailId,
+              emailId: mail.id,
+              inReplyTo: mail.messageId,
+              references: [mail.messageId],
               templateId: "templates-request_key_details-non-tech",
               addLabelIds: [applicationCategory, "APPLICANTS"],
               removeLabelIds: [
-                "INBOX",
-                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+                "INCOMPLETE_APPLICATIONS",
               ],
             });
             break;
@@ -654,23 +685,23 @@ const sendConfirmationEmail = createStep({
               subject:
                 "Application Acknowledged - Request for Additional Information",
               threadId: mail.threadId,
-              emailId: mail.emailId,
+              emailId: mail.id,
+              inReplyTo: mail.messageId,
+              references: [mail.messageId],
               templateId: "templates-request_key_details-creative",
               addLabelIds: [applicationCategory, "APPLICANTS"],
               removeLabelIds: [
-                "INBOX",
-                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+                "INCOMPLETE_APPLICATIONS",
               ],
             });
             break;
 
           default:
             await modifyEmailLabels({
-              emailId: mail.emailId,
+              emailId: mail.id,
               addLabelIds: ["UNCLEAR_APPLICANTS"],
               removeLabelIds: [
-                "INBOX",
-                "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+                "INCOMPLETE_APPLICATIONS",
               ],
             });
             break;

@@ -9,7 +9,6 @@ import {
   sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
-import { gmail_v1 } from "googleapis";
 import { decodeEmailBody, extractJsonFromResult } from "./recruit-workflowV3";
 
 interface ApplicantKeyDetails {
@@ -63,7 +62,7 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:APPLICANTS OR label:REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS`,
+      q: `label:APPLICANTS OR label:INCOMPLETE_APPLICATIONS`,
       maxResults: 100,
     };
     try {
@@ -196,7 +195,7 @@ const extractEmailMetaData = createStep({
 
       const filteredEmails = emailMetaData.labels.some(
         (label) =>
-          label === "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS" ||
+          label === "INCOMPLETE_APPLICATIONS" ||
           label === "APPLICANTS"
       );
 
@@ -237,7 +236,7 @@ const sortReplyEmails = createStep({
         (email) =>
           email &&
           email.labels.includes(
-            "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"
+            "INCOMPLETE_APPLICATIONS"
           )
       );
 
@@ -747,8 +746,8 @@ const migrateApplicantsWithKeyDetails = createStep({
       //   templateId: "templates-confirmation-job_application_received",
       //   addLabelIds: [applicationCategory, "APPLICANTS"],
       //   removeLabelIds: [
-      //     "INBOX",
-      //     "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
+      //
+      //     "INCOMPLETE_APPLICATIONS",
       //   ],
       // });
 
@@ -781,7 +780,6 @@ const informToResend = createStep({
         threadId: mail.threadId,
         emailId: mail.emailId,
         templateId: "templates-request_key_details-resend_key_details",
-        removeLabelIds: ["INBOX"],
       });
     }
 
@@ -816,10 +814,7 @@ const migrateConfirmedApplicants = createStep({
         emailId: mail.emailId,
         templateId: "templates-confirmation-job_application_received",
         addLabelIds: [applicationCategory, "APPLICANTS"],
-        removeLabelIds: [
-          "INBOX",
-          "REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS",
-        ],
+        removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
       });
 
       console.log("confirmationMailResp", confirmationMailResp);
@@ -861,8 +856,7 @@ const informToReApply = createStep({
           threadId: mail.threadId,
           emailId: mail.emailId,
           templateId: "templates-rejection-missing_multiple_details",
-          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-          removeLabelIds: ["INBOX"],
+          addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
       } else if (missingResume) {
         await sendThreadReplyEmail({
@@ -873,8 +867,7 @@ const informToReApply = createStep({
           threadId: mail.threadId,
           emailId: mail.emailId,
           templateId: "templates-rejection-no_resume",
-          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-          removeLabelIds: ["INBOX"],
+          addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
       } else if (missingCoverLetter) {
         await sendThreadReplyEmail({
@@ -885,8 +878,7 @@ const informToReApply = createStep({
           threadId: mail.threadId,
           emailId: mail.emailId,
           templateId: "templates-rejection-no_cover_letter",
-          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-          removeLabelIds: ["INBOX"],
+          addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
       } else if (unclearPosition) {
         await sendThreadReplyEmail({
@@ -897,8 +889,7 @@ const informToReApply = createStep({
           threadId: mail.threadId,
           emailId: mail.emailId,
           templateId: "templates-rejection-no_clear_job_position",
-          addLabelIds: ["REJECTED_APPLICATIONS_DUE_TO_MISSING_DOCUMENTS"],
-          removeLabelIds: ["INBOX"],
+          addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
       } else {
         continue;
@@ -922,42 +913,42 @@ const trackReplyMailsWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  .then(deduplicateNewlyArrivedMails)
-  .foreach(extractEmailMetaData)
-  .then(sortReplyEmails)
-  .branch([
-    [
-      async ({ inputData: { applicants } }) => applicants.length > 0,
-      analyzeApplicants,
-    ],
-    [
-      async ({ inputData: { rejectedApplicants } }) =>
-        rejectedApplicants.length > 0,
-      analyzeRejectedApplicants,
-    ],
-  ])
-  .then(mergeResults)
-  .branch([
-    [
-      async ({ inputData: { applicantsWithKeys } }) =>
-        applicantsWithKeys.length > 0,
-      migrateApplicantsWithKeyDetails,
-    ],
-    [
-      async ({ inputData: { rejectedWithoutKeys } }) =>
-        rejectedWithoutKeys.length > 0,
-      informToResend,
-    ],
-    [
-      async ({ inputData: { rejectedApplicantsData } }) =>
-        rejectedApplicantsData.length > 0,
-      informToReApply,
-    ],
-    [
-      async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
-      migrateConfirmedApplicants,
-    ],
-  ]);
+  // .then(deduplicateNewlyArrivedMails)
+  // .foreach(extractEmailMetaData)
+  // .then(sortReplyEmails)
+  // .branch([
+  //   [
+  //     async ({ inputData: { applicants } }) => applicants.length > 0,
+  //     analyzeApplicants,
+  //   ],
+  //   [
+  //     async ({ inputData: { rejectedApplicants } }) =>
+  //       rejectedApplicants.length > 0,
+  //     analyzeRejectedApplicants,
+  //   ],
+  // ])
+  // .then(mergeResults)
+  // .branch([
+  //   [
+  //     async ({ inputData: { applicantsWithKeys } }) =>
+  //       applicantsWithKeys.length > 0,
+  //     migrateApplicantsWithKeyDetails,
+  //   ],
+  //   [
+  //     async ({ inputData: { rejectedWithoutKeys } }) =>
+  //       rejectedWithoutKeys.length > 0,
+  //     informToResend,
+  //   ],
+  //   [
+  //     async ({ inputData: { rejectedApplicantsData } }) =>
+  //       rejectedApplicantsData.length > 0,
+  //     informToReApply,
+  //   ],
+  //   [
+  //     async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
+  //     migrateConfirmedApplicants,
+  //   ],
+  // ]);
 
 trackReplyMailsWorkflow.commit();
 

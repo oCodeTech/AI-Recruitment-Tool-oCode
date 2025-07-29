@@ -56,7 +56,7 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:INBOX -label:INCOMPLETE_APPLICATIONS`,
+      q: `label:inbox -label:incomplete_applications (from:code@ocode.co OR from:vivek@ocode.co)`,
       maxResults: 100,
     };
 
@@ -257,9 +257,19 @@ const extractEmailMetaData = createStep({
                 "cv attached",
                 "please find my resume",
                 "attached is my resume",
+                "attached my resume",
+                "resume:",
+                "Resume:",
               ],
+            }) ||
+            containsKeyword({
+              text: decodedBody || "",
+              keywords: ["resume", "Resume", "cv", "CV"],
             })
-          : false;
+          : containsKeyword({
+              text: decodedBody || "",
+              keywords: ["resume", "Resume", "cv", "CV"],
+            });
 
       try {
         const grokAgent = mastra.getAgent("gmailGroqAgent");
@@ -577,119 +587,79 @@ const sendConfirmationEmail = createStep({
         ? `${mail.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
         : "";
 
-      const confirmationEmailResp = await sendThreadReplyEmail({
-        name: mail.name || "",
-        position: mail.position || "unclear",
-        userEmail: mail.userEmail,
-        subject: mail.subject,
-        threadId: mail.threadId,
-        emailId: mail.id,
-        inReplyTo: mail.messageId,
-        references: [mail.messageId],
-        templateId: "templates-confirmation-job_application_received",
-        addLabelIds: [applicationCategory, "APPLICANTS"],
-        removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
-      });
-      if (
-        confirmationEmailResp?.labelIds?.includes("SENT") &&
-        confirmationEmailResp?.id &&
-        confirmationEmailResp?.threadId
-      ) {
-        const confirmationEmail = await getEmailContent(
-          confirmationEmailResp.id
-        );
+      switch (mail.category) {
+        case "TECH":
+          const templateId =
+            mail.experienceStatus === "experienced"
+              ? "templates-request_key_details-tech-experienced"
+              : mail.experienceStatus === "fresher"
+                ? "templates-request_key_details-tech-fresher"
+                : null;
 
-        if (!confirmationEmail) {
-          console.log("No confirmation email found");
-          continue;
-        }
-
-        const confirmationMessageId = confirmationEmail.payload?.headers?.find(
-          (h) => h.name && h.name.toLowerCase() === "message-id"
-        )?.value;
-
-        if (!confirmationMessageId) {
-          console.log(
-            "No confirmation message id found",
-            confirmationMessageId
-          );
-          continue;
-        }
-
-        switch (mail.category) {
-          case "TECH":
-            const templateId =
-              mail.experienceStatus === "experienced"
-                ? "templates-request_key_details-tech-experienced"
-                : mail.experienceStatus === "fresher"
-                  ? "templates-request_key_details-tech-fresher"
-                  : null;
-
-            if (!templateId || !mail.position || mail.position === "unclear") {
-              await modifyEmailLabels({
-                emailId: mail.id,
-                addLabelIds: ["UNCLEAR_APPLICANTS"],
-                removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
-              });
-              continue;
-            }
-
-            await sendThreadReplyEmail({
-              name: mail.name || "",
-              position: mail.position || "unclear",
-              userEmail: mail.userEmail,
-              subject: mail.subject,
-              threadId: mail.threadId,
-              emailId: mail.id,
-              inReplyTo: mail.messageId,
-              references: [mail.messageId, confirmationMessageId],
-              templateId: templateId,
-              addLabelIds: [applicationCategory, "APPLICANTS"],
-              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
-            });
-
-            break;
-
-          case "NON-TECH":
-            await sendThreadReplyEmail({
-              name: mail.name || "",
-              position: mail.position || "unclear",
-              userEmail: mail.userEmail,
-              subject: mail.subject,
-              threadId: mail.threadId,
-              emailId: mail.id,
-              inReplyTo: mail.messageId,
-              references: [mail.messageId],
-              templateId: "templates-request_key_details-non-tech",
-              addLabelIds: [applicationCategory, "APPLICANTS"],
-              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
-            });
-            break;
-
-          case "CREATIVE":
-            await sendThreadReplyEmail({
-              name: mail.name || "",
-              position: mail.position || "unclear",
-              userEmail: mail.userEmail,
-               subject: mail.subject,
-              threadId: mail.threadId,
-              emailId: mail.id,
-              inReplyTo: mail.messageId,
-              references: [mail.messageId],
-              templateId: "templates-request_key_details-creative",
-              addLabelIds: [applicationCategory, "APPLICANTS"],
-              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
-            });
-            break;
-
-          default:
+          if (!templateId || !mail.position || mail.position === "unclear") {
             await modifyEmailLabels({
               emailId: mail.id,
               addLabelIds: ["UNCLEAR_APPLICANTS"],
               removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
             });
-            break;
-        }
+            continue;
+          }
+
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.position || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: templateId,
+            addLabelIds: [applicationCategory, "APPLICANTS"],
+            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+          });
+
+          break;
+
+        case "NON-TECH":
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.position || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: "templates-request_key_details-non-tech",
+            addLabelIds: [applicationCategory, "APPLICANTS"],
+            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+          });
+          break;
+
+        case "CREATIVE":
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.position || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: "templates-request_key_details-creative",
+            addLabelIds: [applicationCategory, "APPLICANTS"],
+            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+          });
+          break;
+
+        default:
+          await modifyEmailLabels({
+            emailId: mail.id,
+            addLabelIds: ["UNCLEAR_APPLICANTS"],
+            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+          });
+          break;
       }
     }
 

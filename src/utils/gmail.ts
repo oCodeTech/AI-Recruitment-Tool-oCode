@@ -344,7 +344,7 @@ export const sendThreadReplyEmail = async ({
 
     const sendMailResp = await sendEmail({
       to: userEmail,
-      subject: `Re: ${subject}`,
+      subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,
       body: replyMail,
       inReplyTo: inReplyTo,
       references: references,

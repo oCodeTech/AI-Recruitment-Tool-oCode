@@ -486,32 +486,31 @@ const analyseIncompleteApplications = createStep({
         text: mail.body,
         keywords: [
           "cover letter",
-          "resume",
-          "cv",
-          "job application",
-          "job",
           "application",
-          "work experience",
-          "skills",
-          "education",
           "about me",
           "summary",
           "objective",
           "job description",
           "responsibilities",
-          "keen interest",
+          "motivated",
+          "interested",
+          "experience",
+          "skills",
+          "education",
+          "background",
+          "contributions",
+          "achievements",
+          "qualifications",
+          "passionate about",
           "strong background",
-          "software development",
-          "contribute positively",
-          "scalable web applications",
-          "optimizing database performance",
+          "enthusiastic",
+          "dedicated",
           "highly motivated",
           "detail-oriented",
           "achieving excellence",
-          "qualifications",
         ],
       });
-      const hasResume =
+     const hasResume =
         attachmentId?.length && attachment_filename?.length
           ? containsKeyword({
               text: attachment_filename?.[0] || "",
@@ -520,13 +519,26 @@ const analyseIncompleteApplications = createStep({
             containsKeyword({
               text: mail.body || "",
               keywords: [
+                "resume",
+                "Resume",
                 "resume attached",
                 "cv attached",
                 "please find my resume",
                 "attached is my resume",
+                "attached my resume",
+                "resume:",
+                "Resume:",
               ],
+            }) ||
+            containsKeyword({
+              text: mail.body || "",
+              keywords: ["resume", "Resume", "cv", "CV"],
             })
-          : false;
+          : containsKeyword({
+              text: mail.body || "",
+              keywords: ["resume", "Resume", "cv", "CV"],
+            });
+
 
       const emailMetaData = {
         id: mail.id,

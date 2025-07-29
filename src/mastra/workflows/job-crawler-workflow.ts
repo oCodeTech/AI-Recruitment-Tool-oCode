@@ -1,114 +1,232 @@
 import { createStep, createWorkflow } from "@mastra/core";
 import z from "zod";
-
 import { redis } from "../../queue/connection";
+import puppeteer from "puppeteer";
+
+import * as fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const JobOpeningSchema = z
+  .object({
+    title: z.string(),
+    category: z.string(),
+    type: z.string(),
+    location: z.string(),
+    salary: z.string(),
+    description: z.string(),
+    keyResponsibiliites: z.array(
+      z
+        .object({
+          responsibility: z.string(),
+          detail: z.string(),
+        })
+        .nullable()
+    ),
+    requirements: z.array(
+      z
+        .object({
+          requirement: z.string(),
+          detail: z.string(),
+        })
+        .nullable()
+    ),
+    experience: z.string(),
+  })
+  .nullable();
 
 const jobCrawlTrigger = createStep({
   id: "job-crawl-trigger",
   description: "Triggers the workflow when new job openings are found",
-  inputSchema: z.object({ url: z.string() }).describe("Job Opening URL"),
-  outputSchema: z.string().nullable().describe("extracted job opening content"),
-  execute: async ({ inputData: { url }, mastra }) => {
+  inputSchema: z
+    .object({
+      url: z.string(),
+    })
+    .describe("Job Opening details"),
+  outputSchema: z
+    .object({
+      hostname: z.string().describe("Job Opening hostname"),
+      url: z.string().describe("Job Opening URL"),
+    })
+    .nullable(),
+  execute: async ({ inputData: { url } }) => {
     if (!url) {
       console.error("No job opening URL found");
       return null;
     }
 
     try {
-      const alreadyProcessed = await redis.get(`processed_job_opening:${url}`);
-      if (alreadyProcessed) {
-        console.log(`Job opening ${url} already processed, skipping`);
-        return null;
-      }
+      // const alreadyProcessed = await redis.get(`processed_job_opening:${url}`);
+      // if (alreadyProcessed) {
+      //   console.log(`Job opening ${url} already processed, skipping`);
+      //   return null;
+      // }
 
-      await redis.set(`processed_job_opening:${url}`, "1", "EX", 3600);
+      // await redis.set(`processed_job_opening:${url}`, "1", "EX", 3600);
 
-      const webCrawlerAgent = mastra.getAgent("webCrawlerAgent");
+      const jobOpeningUrl = new URL(url);
 
-    const result = await webCrawlerAgent.generate(
-  `Please extract the job opening content from the following URL: ${url}`,
-  {
-    instructions: `
-You are an AI agent. Your task is to extract all main content related to a job opening from the provided URL.
+      if (!jobOpeningUrl.hostname) return null;
 
-Instructions:
-1. Use the fetcher_fetch_url tool to fetch the webpage content. Pass the URL as:
-   {
-     "url": "${url}"
-   }
-2. Carefully review the fetched content. Only proceed if the page contains a job opening or job description.
-3. If the content is related to a job opening, extract and include all main content and sections relevant to the job. This includes, but is not limited to:
-   - Job Title
-   - Company Name
-   - Location
-   - Responsibilities
-   - Requirements
-   - Qualifications
-   - Benefits
-   - Salary or Compensation
-   - About the Company
-   - How to Apply
-   - Any other relevant information or sections present in the job posting
-4. Present all extracted content in a well-structured Markdown (.md) format, preserving the original section headings and order as much as possible.
-5. If the page does not contain a job opening or job description, respond with: unrelated
-6. Do not include any content that is not directly related to the job opening.
-
-Example input to fetcher_fetch_url:
-{
-  "url": "${url}"
-}
-
-Example output (if relevant):
-\`\`\`md
-## Senior Backend Developer
-
-**Company:** Example Corp  
-**Location:** Remote
-
-**About the Company:**
-Example Corp is a leading provider of cloud solutions...
-
-**Responsibilities:**
-- Design and implement backend services
-- Collaborate with frontend and DevOps teams
-
-**Requirements:**
-- 5+ years experience in backend development
-- Proficiency in Node.js and TypeScript
-
-**Qualifications:**
-- Bachelor’s degree in Computer Science or related field
-
-**Benefits:**
-- Health insurance
-- Flexible working hours
-
-**Salary:**
-$120,000 - $150,000 per year
-
-**How to Apply:**
-Send your resume to jobs@example.com
-\`\`\`
-
-Example output (if not relevant):
-unrelated
-
-Return only the Markdown content or "unrelated".
-    `,
-    maxSteps: 10,
-    maxTokens: 500
-  }
-);
-
-      const extractedJobOpeningContent = result.text;
-
-      console.log("extractedJobOpeningContent", extractedJobOpeningContent);
-
-      return extractedJobOpeningContent;
+      return {
+        url,
+        hostname: jobOpeningUrl.hostname,
+      };
     } catch (err) {
       console.log(err);
       return null;
     }
+  },
+});
+
+const handleWebCrawler = createStep({
+  id: "handle-web-crawler",
+  description: "Handles the web crawler",
+  inputSchema: z
+    .object({
+      hostname: z.string().describe("Job Opening hostname"),
+      url: z.string().describe("Job Opening URL"),
+    })
+    .nullable(),
+  outputSchema: JobOpeningSchema,
+  execute: async ({ inputData }) => {
+    if (!inputData || !inputData.url) return null;
+
+    const url = inputData.url;
+
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox"],
+    });
+    const page = await browser.newPage();
+
+    try {
+      await page.goto(url, { waitUntil: "networkidle2", timeout: 0 });
+      await page.waitForSelector(".awsm-job-container", { timeout: 30000 });
+
+      const jobData = await page.evaluate(() => {
+        const title =
+          document
+            .querySelector(".awsm-jobs-single-title")
+            ?.textContent?.trim() || "";
+        const category =
+          document
+            .querySelector(
+              ".awsm-job-specification-job-category .awsm-job-specification-term"
+            )
+            ?.textContent?.trim() || "";
+        const type =
+          document
+            .querySelector(
+              ".awsm-job-specification-job-type .awsm-job-specification-term"
+            )
+            ?.textContent?.trim() || "";
+        const location =
+          document
+            .querySelector(
+              ".awsm-job-specification-job-location .awsm-job-specification-term"
+            )
+            ?.textContent?.trim() || "";
+
+        const salaryElements = document.querySelectorAll(
+          ".awsm-job-specification-salary .awsm-job-specification-term"
+        );
+        const salary =
+          Array.from(salaryElements)
+            .map((element) => element.textContent?.trim() || "")
+            .join(", ") || "";
+
+        const description =
+          Array.from(
+            document.querySelectorAll(".awsm-job-entry-content p")
+          )[0]?.textContent?.trim() || "";
+
+        const keyResponsibiliites =
+          Array.from(document.querySelectorAll(".awsm-job-entry-content ul"))[0]
+            ?.textContent?.trim()
+            .split("\n")
+            .map((item) => {
+              const [key, value] = item.split(":");
+
+              return { responsibility: key.trim(), detail: value.trim() };
+            }) || [];
+
+        const requirements =
+          Array.from(document.querySelectorAll(".awsm-job-entry-content ul"))[1]
+            ?.textContent?.trim()
+            .split("\n")
+            .map((item) => {
+              const [key, value] = item.split(":");
+
+              return { requirement: key.trim(), detail: value.trim() };
+            }) || [];
+
+        const experienceLi = Array.from(
+          document.querySelectorAll(".awsm-job-entry-content ul li")
+        ).find(
+          (li) => li.textContent && li.textContent.includes("Total work:")
+        );
+
+        const experience =
+          experienceLi && experienceLi.textContent
+            ? experienceLi.textContent.trim()
+            : "";
+
+        return {
+          title,
+          category,
+          type,
+          location,
+          salary,
+          description,
+          keyResponsibiliites,
+          requirements,
+          experience,
+        };
+      });
+
+      return jobData;
+    } catch (error) {
+      console.error("Error crawling:", error);
+      return null;
+    } finally {
+      await browser.close();
+    }
+  },
+});
+
+const indexJobOpening = createStep({
+  id: "index-job-opening",
+  description: "Indexes the job opening",
+  inputSchema: JobOpeningSchema,
+  outputSchema: z.string().describe("Final output of the recruitment workflow"),
+  execute: async ({ inputData, mastra }) => {
+    if (!inputData) {
+      console.log("No input data found for indexJobOpening step");
+      return "No input data found";
+    }
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const jobOpeningsDir = path.resolve(
+      __dirname,
+      "../../src/mastra/job-openings"
+    );
+    const filePath = path.join(jobOpeningsDir, `jobOpening.json-${Date.now()}`);
+
+    try {
+      if (!fs.existsSync(jobOpeningsDir)) {
+        fs.mkdirSync(jobOpeningsDir);
+      }
+
+      fs.writeFileSync(filePath, JSON.stringify(inputData));
+
+      const ragAgent = mastra?.getAgent("ragAgent");
+
+      if (!ragAgent) throw Error("RAG agent not found");
+    } catch (error) {
+      console.error("Error occured while indexing the job opening:", error);
+    }
+
+    return "";
   },
 });
 
@@ -123,7 +241,10 @@ const jobCrawlerWorkflow = createWorkflow({
     attempts: 5,
     delay: 5000,
   },
-}).then(jobCrawlTrigger);
+})
+  .then(jobCrawlTrigger)
+  .then(handleWebCrawler)
+  .then(indexJobOpening);
 
 jobCrawlerWorkflow.commit();
 

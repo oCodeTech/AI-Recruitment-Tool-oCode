@@ -49,7 +49,7 @@ const AgentTrigger = createStep({
   outputSchema: z
     .array(
       z.object({
-        emailId: z.string().nullable().optional(),
+        id: z.string().nullable().optional(),
         threadId: z.string().nullable().optional(),
       })
     )
@@ -57,7 +57,7 @@ const AgentTrigger = createStep({
   execute: async ({ inputData }) => {
     if (!inputData) {
       console.error("No signal found for agent-trigger step");
-      return [{ emailId: "", threadId: "" }];
+      return [{ id: "", threadId: "" }];
     }
 
     const searchInboxInput = {
@@ -67,12 +67,10 @@ const AgentTrigger = createStep({
     };
     try {
       const searchResult = await gmailSearchEmails(searchInboxInput);
-      return searchResult.filter(
-        ({ emailId, threadId }) => emailId && threadId
-      );
+      return searchResult.filter(({ id, threadId }) => id && threadId);
     } catch (err) {
       console.log(err);
-      return [{ emailId: "", threadId: "" }];
+      return [{ id: "", threadId: "" }];
     }
   },
 });
@@ -83,7 +81,7 @@ const deduplicateNewlyArrivedMails = createStep({
   inputSchema: z
     .array(
       z.object({
-        emailId: z.string().nullable().optional(),
+        id: z.string().nullable().optional(),
         threadId: z.string().nullable().optional(),
       })
     )
@@ -91,7 +89,7 @@ const deduplicateNewlyArrivedMails = createStep({
   outputSchema: z
     .array(
       z.object({
-        emailId: z.string().nullable().optional(),
+        id: z.string().nullable().optional(),
         threadId: z.string().nullable().optional(),
       })
     )
@@ -105,11 +103,11 @@ const deduplicateNewlyArrivedMails = createStep({
       return [];
     }
 
-    const deduplicatedEmails: { emailId: string; threadId: string }[] = [];
+    const deduplicatedEmails: { id: string; threadId: string }[] = [];
     for (let mail of inputData) {
-      if (!mail || !mail.emailId || !mail.threadId) continue;
+      if (!mail || !mail.id || !mail.threadId) continue;
 
-      const { emailId, threadId } = mail;
+      const { id, threadId } = mail;
 
       try {
         const alreadyProcessed = await redis.get(
@@ -117,12 +115,13 @@ const deduplicateNewlyArrivedMails = createStep({
         );
         if (alreadyProcessed) {
           console.log(`Thread ID ${threadId} already processed, skipping`);
+          
           continue;
         }
 
         await redis.set(`processed_thread:${threadId}`, "1", "EX", 3600);
         deduplicatedEmails.push({
-          emailId,
+          id,
           threadId,
         });
       } catch (err) {
@@ -137,8 +136,13 @@ const deduplicateNewlyArrivedMails = createStep({
 
 const ExtractEmailMetaDataOutput = z
   .object({
-    emailId: z.string(),
+    id: z.string(),
+    messageId: z.string(),
     threadId: z.string(),
+    username: z.string(),
+    userEmail: z.string(),
+    subject: z.string(),
+    body: z.string(),
     labels: z.array(z.string()),
   })
   .nullable()
@@ -148,58 +152,92 @@ const extractEmailMetaData = createStep({
   id: "extract-email-meta-data",
   description: "Extracts email metadata by email ID and thread ID",
   inputSchema: z.object({
-    emailId: z.string().nullable().optional(),
+    id: z.string().nullable().optional(),
     threadId: z.string().nullable().optional(),
   }),
   outputSchema: ExtractEmailMetaDataOutput,
-  execute: async ({ inputData }) => {
-    if (!inputData || Object.values(inputData).some((v) => !v || !v.trim())) {
+  execute: async ({ inputData: { id, threadId } }) => {
+    if (!id || !threadId) {
       console.log(
         "Email ID or thread ID not found for extract-email-meta-data step",
-        inputData
+        { id, threadId }
       );
       return null;
     }
 
     try {
-      const { emailId, threadId } = inputData;
+      const originalEmail = await getEmailContent(id!);
+      const originalMessageId = originalEmail?.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "message-id"
+      )?.value;
 
-      const originalEmail = await getEmailContent(emailId!);
+      if (!originalMessageId) {
+        console.error(
+          `Message ID ${originalMessageId} not found for email ID ${id}`
+        );
+        return null;
+      }
+
       const threadMessages = (await getThreadMessages(threadId!)) || [];
 
       const latestThreadEmail = threadMessages[threadMessages.length - 1];
       if (!latestThreadEmail || !originalEmail) {
+        console.error("Latest thread email or original email not found");
         return null;
       }
 
       const labels = await getLabelNames(originalEmail.labelIds || []);
 
-      const userEmail = latestThreadEmail.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[1]
-        ?.replace(">", "");
+      const userAddress = latestThreadEmail.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "from"
+      )?.value;
 
-      const username = latestThreadEmail.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[0]
-        .trim();
+      const userEmail = userAddress?.split("<")[1]?.replace(">", "");
 
-      if (userEmail === recruitmentMail || username === recruitmentMail)
+      const username = userAddress?.split("<")[0].trim();
+
+      const subject = latestThreadEmail.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "subject"
+      )?.value;
+
+      const plainTextPart =
+        latestThreadEmail.payload?.parts
+          ?.find((p) => p.mimeType === "multipart/alternative")
+          ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
+        latestThreadEmail.payload?.parts?.find(
+          (p) => p.mimeType === "text/plain"
+        );
+
+      const decodedBody = decodeEmailBody(plainTextPart).split("On")[0];
+
+      if (
+        userEmail === recruitmentMail ||
+        username === recruitmentMail ||
+        !userEmail ||
+        !username ||
+        !subject ||
+        !decodedBody
+      ) {
         return null;
+      }
 
       const emailMetaData = {
-        emailId: latestThreadEmail.id || emailId || "",
-        threadId: latestThreadEmail.threadId || threadId || "",
+        id,
+        messageId: originalMessageId,
+        userEmail: userEmail,
+        username: username,
+        subject: subject,
+        body: decodedBody,
+        threadId: threadId || latestThreadEmail.threadId || "",
         labels: labels || [],
       };
 
       const filteredEmails = emailMetaData.labels.some(
-        (label) =>
-          label === "INCOMPLETE_APPLICATIONS" ||
-          label === "APPLICANTS"
+        (label) => label === "INCOMPLETE_APPLICATIONS" || label === "APPLICANTS"
       );
 
       if (!filteredEmails) {
+        console.log("Email not filtered for email ID", id);
         return null;
       }
       return emailMetaData;
@@ -212,7 +250,7 @@ const extractEmailMetaData = createStep({
 
 const sortReplyEmailsOutput = z.object({
   applicants: z.array(ExtractEmailMetaDataOutput),
-  rejectedApplicants: z.array(ExtractEmailMetaDataOutput),
+  incompleteApplications: z.array(ExtractEmailMetaDataOutput),
 });
 
 const sortReplyEmails = createStep({
@@ -224,7 +262,7 @@ const sortReplyEmails = createStep({
     if (!inputData || !inputData.length) {
       return {
         applicants: [],
-        rejectedApplicants: [],
+        incompleteApplications: [],
       };
     }
 
@@ -232,30 +270,27 @@ const sortReplyEmails = createStep({
       const applicants = inputData.filter(
         (email) => email && email.labels.includes("APPLICANTS")
       );
-      const rejectedApplicants = inputData.filter(
-        (email) =>
-          email &&
-          email.labels.includes(
-            "INCOMPLETE_APPLICATIONS"
-          )
+      const incompleteApplications = inputData.filter(
+        (email) => email && email.labels.includes("INCOMPLETE_APPLICATIONS")
       );
 
       return {
         applicants,
-        rejectedApplicants,
+        incompleteApplications,
       };
     } catch (err) {
       console.log(err);
       return {
         applicants: [],
-        rejectedApplicants: [],
+        incompleteApplications: [],
       };
     }
   },
 });
 
-const analyzeApplicantsOutput = z.object({
-  emailId: z.string(),
+const analyseApplicantsOutput = z.object({
+  id: z.string(),
+  messageId: z.string(),
   threadId: z.string(),
   labels: z.array(z.string()),
   userEmail: z.string().nullable(),
@@ -288,80 +323,47 @@ const analyzeApplicantsOutput = z.object({
     .optional(),
 });
 
-const analyzeApplicants = createStep({
-  id: "analyze-applicants",
-  description: "Analyzes applicants",
+const analyseApplicants = createStep({
+  id: "analyse-applicants",
+  description: "analyses applicants",
   inputSchema: sortReplyEmailsOutput,
   outputSchema: z.object({
-    applicantsData: z.array(analyzeApplicantsOutput),
-    rejectedApplicantsData: z.array(analyzeApplicantsOutput),
+    applicantsData: z.array(analyseApplicantsOutput),
+    incompleteApplicationsData: z.array(analyseApplicantsOutput),
   }),
   execute: async ({ inputData: { applicants }, mastra }) => {
     if (!applicants || !applicants.length) {
       throw Error("Applicant mails not found");
     }
 
-    const applicantsData: z.infer<typeof analyzeApplicantsOutput>[] = [];
-    const rejectedApplicantsData: z.infer<typeof analyzeApplicantsOutput>[] =
-      [];
+    const applicantsData: z.infer<typeof analyseApplicantsOutput>[] = [];
+    const incompleteApplicationsData: z.infer<
+      typeof analyseApplicantsOutput
+    >[] = [];
 
     for (let mail of applicants) {
       if (!mail || !mail.threadId) continue;
 
-      const threadMessages = (await getThreadMessages(mail.threadId)) || [];
-
-      if (threadMessages.length === 0) continue;
-
-      const latestThreadMessage = threadMessages[threadMessages.length - 1];
-
-      // --------------------------------------------------------------------
-      // DATA EXTRACTION
-
-      const userEmail = latestThreadMessage.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[1]
-        ?.replace(">", "");
-
-      const name = latestThreadMessage.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[0]
-        .trim();
-
-      if (userEmail === recruitmentMail || name === recruitmentMail) continue;
-
-      const subject = latestThreadMessage.payload?.headers?.find(
-        (h) => h.name === "Subject"
-      )?.value;
-
-      const plainTextPart =
-        latestThreadMessage.payload?.parts
-          ?.find((p) => p.mimeType === "multipart/alternative")
-          ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
-        latestThreadMessage.payload?.parts?.find(
-          (p) => p.mimeType === "text/plain"
-        );
-
-      const decodedBody = decodeEmailBody(plainTextPart);
-
       const gmailGroqAgent = mastra.getAgent("gmailGroqAgent");
 
-      const emailMetaData: z.infer<typeof analyzeApplicantsOutput> = {
-        emailId: latestThreadMessage.id || "",
-        threadId: latestThreadMessage.threadId || "",
+      if (!gmailGroqAgent) throw Error("Groq Agent not found");
+
+      const emailMetaData: z.infer<typeof analyseApplicantsOutput> = {
+        id: mail.id || "",
+        threadId: mail.threadId,
+        messageId: mail.messageId || "",
         labels: mail.labels,
-        userEmail: userEmail ?? null,
-        name: name ?? null,
-        subject: subject ?? null,
-        body: decodedBody ?? null,
+        userEmail: mail.userEmail,
+        name: mail.username,
+        subject: mail.subject,
+        body: mail.body,
       };
 
       if (!gmailGroqAgent) throw Error("Groq Agent not found");
 
       try {
         const result = await gmailGroqAgent.generate(
-          `Extract key details from the following email body:\n\n${
-            decodedBody.split("On")[0]
-          }`,
+          `Extract key details from the following email body:\n\n${mail.body}`,
           {
             instructions: `
 You are an AI agent tasked with analyzing email bodies and extracting specific key details.
@@ -399,12 +401,14 @@ Return the result as a JSON object with the required fields and any optional fie
           result.text
         );
 
-        const missingKeyDetails = Object.values(extractedDetails).some(
-          (value) => value === "Not Provided" || value === "unclear"
-        );
+        const missingKeyDetails = extractedDetails
+          ? Object.values(extractedDetails).some(
+              (value) => value === "Not Provided" || value === "unclear"
+            )
+          : true;
 
         if (missingKeyDetails) {
-          rejectedApplicantsData.push(emailMetaData);
+          incompleteApplicationsData.push(emailMetaData);
           continue;
         }
 
@@ -413,19 +417,20 @@ Return the result as a JSON object with the required fields and any optional fie
         applicantsData.push(emailMetaData);
       } catch (e) {
         console.error("Error extracting key details from email:", e);
-        rejectedApplicantsData.push(emailMetaData);
+        incompleteApplicationsData.push(emailMetaData);
       }
     }
     return {
       applicantsData,
-      rejectedApplicantsData,
+      incompleteApplicationsData,
     };
   },
 });
 
-const analyzeApplicantionOutput = z.object({
-  emailId: z.string(),
+const analyseApplicantionOutput = z.object({
+  id: z.string(),
   threadId: z.string(),
+  messageId: z.string(),
   labels: z.array(z.string()),
   userEmail: z.string().nullable(),
   name: z.string().nullable(),
@@ -438,27 +443,28 @@ const analyzeApplicantionOutput = z.object({
   position: z.string().nullable(),
 });
 
-const analyzeRejectedApplicants = createStep({
-  id: "analyze-rejected-applicants",
-  description: "Analyzes rejected applicants",
+const analyseIncompleteApplications = createStep({
+  id: "analyse-incomplete-applications",
+  description: "analyses incomplete applications",
   inputSchema: sortReplyEmailsOutput,
   outputSchema: z.object({
-    applicantsData: z.array(analyzeApplicantionOutput),
-    rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+    applicantsData: z.array(analyseApplicantionOutput),
+    incompleteApplicationsData: z.array(analyseApplicantionOutput),
   }),
-  execute: async ({ inputData: { rejectedApplicants }, mastra }) => {
-    if (!rejectedApplicants || !rejectedApplicants.length) {
+  execute: async ({ inputData: { incompleteApplications }, mastra }) => {
+    if (!incompleteApplications || !incompleteApplications.length) {
       return {
         applicantsData: [],
-        rejectedApplicantsData: [],
+        incompleteApplicationsData: [],
       };
     }
 
-    const applicantsData: z.infer<typeof analyzeApplicantionOutput>[] = [];
-    const rejectedApplicantsData: z.infer<typeof analyzeApplicantionOutput>[] =
-      [];
+    const applicantsData: z.infer<typeof analyseApplicantionOutput>[] = [];
+    const incompleteApplicationsData: z.infer<
+      typeof analyseApplicantionOutput
+    >[] = [];
 
-    for (let mail of rejectedApplicants) {
+    for (let mail of incompleteApplications) {
       if (!mail || !mail.threadId) continue;
 
       const threadMessages = (await getThreadMessages(mail.threadId)) || [];
@@ -469,32 +475,6 @@ const analyzeRejectedApplicants = createStep({
       // --------------------------------------------------------------------
       // DATA EXTRACTION
 
-      const userEmail = latestThreadMessage.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[1]
-        ?.replace(">", "");
-
-      const name = latestThreadMessage.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[0]
-        .trim();
-
-      if (userEmail === recruitmentMail || name === recruitmentMail) continue;
-
-      const subject = latestThreadMessage.payload?.headers?.find(
-        (h) => h.name === "Subject"
-      )?.value;
-
-      const plainTextPart =
-        latestThreadMessage.payload?.parts
-          ?.find((p) => p.mimeType === "multipart/alternative")
-          ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
-        latestThreadMessage.payload?.parts?.find(
-          (p) => p.mimeType === "text/plain"
-        );
-
-      const decodedBody = decodeEmailBody(plainTextPart);
-
       const attachment_filename = latestThreadMessage.payload?.parts
         ?.filter((p) => p.filename)
         .map((p) => p.filename);
@@ -503,7 +483,7 @@ const analyzeRejectedApplicants = createStep({
         .map((p) => p.body?.attachmentId);
 
       const hasCoverLetter = containsKeyword({
-        text: decodedBody,
+        text: mail.body,
         keywords: [
           "cover letter",
           "resume",
@@ -538,7 +518,7 @@ const analyzeRejectedApplicants = createStep({
               keywords: ["resume", "cv"],
             }) ||
             containsKeyword({
-              text: decodedBody || "",
+              text: mail.body || "",
               keywords: [
                 "resume attached",
                 "cv attached",
@@ -549,13 +529,14 @@ const analyzeRejectedApplicants = createStep({
           : false;
 
       const emailMetaData = {
-        emailId: latestThreadMessage.id || "",
-        threadId: latestThreadMessage.threadId || "",
+        id: mail.id,
+        threadId: mail.threadId,
+        messageId: mail.messageId,
         labels: mail.labels,
-        userEmail: userEmail ?? null,
-        name: name ?? null,
-        subject: subject ?? null,
-        body: decodedBody ?? null,
+        userEmail: mail.userEmail,
+        name: mail.username,
+        subject: mail.subject,
+        body: mail.body,
         attachment_filename: attachment_filename || [],
         attachmentId: attachmentId || [],
         hasCoverLetter,
@@ -564,7 +545,7 @@ const analyzeRejectedApplicants = createStep({
       };
 
       if (!hasCoverLetter && !hasResume) {
-        rejectedApplicantsData.push(emailMetaData);
+        incompleteApplicationsData.push(emailMetaData);
         continue;
       }
 
@@ -575,14 +556,14 @@ const analyzeRejectedApplicants = createStep({
         const grokAgent = mastra.getAgent("gmailGroqAgent");
 
         const result = await grokAgent.generate(
-          "Analyze the email subject and body to determine the most likely job title the candidate is applying for. Output only a JSON object with the job title or 'unclear'.",
+          "analyse the email subject and body to determine the most likely job title the candidate is applying for. Output only a JSON object with the job title or 'unclear'.",
           {
             instructions: `
       You are given the subject and body of a job application email. Your task is to determine the most likely job title the candidate is applying for.
       - Use explicit mentions, strong contextual clues, and careful reasoning to infer the job title.
       - Only infer a job title if there is clear, unambiguous evidence in the subject or body (such as direct statements, repeated references, or a clear match between skills/experience and a standard job title).
       - Do not guess or invent job titles that are not clearly supported by the content.
-      - Do not use any tools, functions, or API calls. Only analyze the provided subject and body.
+      - Do not use any tools, functions, or API calls. Only analyse the provided subject and body.
       - Normalize job titles to standard forms (e.g., "Full Stack Web Developer" and "Full Stack Developer" are equivalent).
       - If multiple job titles are possible, return the one most strongly indicated by the content.
       - If no job title can be reasonably and confidently inferred, return 'unclear'.
@@ -608,8 +589,8 @@ const analyzeRejectedApplicants = createStep({
       Body: "I am interested in learning more about your services."
       Output: {"job_title": "unclear"}
 
-      Subject: ${subject}
-      Body: ${decodedBody}
+      Subject: ${mail.subject}
+      Body: ${mail.body}
     `,
             maxSteps: 10,
             maxTokens: 50,
@@ -625,7 +606,7 @@ const analyzeRejectedApplicants = createStep({
           jobPosition.job_title === "unclear" ||
           !jobPosition.job_title
         ) {
-          rejectedApplicantsData.push({
+          incompleteApplicationsData.push({
             ...emailMetaData,
             hasCoverLetter,
             hasResume,
@@ -641,7 +622,7 @@ const analyzeRejectedApplicants = createStep({
         }
       } catch (err) {
         console.log("error occured while extracting job title", err);
-        rejectedApplicantsData.push({
+        incompleteApplicationsData.push({
           ...emailMetaData,
           hasCoverLetter,
           hasResume,
@@ -652,7 +633,7 @@ const analyzeRejectedApplicants = createStep({
 
     return {
       applicantsData,
-      rejectedApplicantsData,
+      incompleteApplicationsData,
     };
   },
 });
@@ -661,21 +642,21 @@ const mergeResults = createStep({
   id: "merge-results",
   description: "Merges the results of the two branches",
   inputSchema: z.object({
-    "analyze-rejected-applicants": z.object({
-      applicantsData: z.array(analyzeApplicantionOutput),
-      rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+    "analyse-incomplete-applications": z.object({
+      applicantsData: z.array(analyseApplicantionOutput),
+      incompleteApplicationsData: z.array(analyseApplicantionOutput),
     }),
-    "analyze-applicants": z.object({
-      applicantsData: z.array(analyzeApplicantsOutput),
-      rejectedApplicantsData: z.array(analyzeApplicantsOutput),
+    "analyse-applicants": z.object({
+      applicantsData: z.array(analyseApplicantsOutput),
+      incompleteApplicationsData: z.array(analyseApplicantsOutput),
     }),
   }),
   outputSchema: z
     .object({
-      applicantsWithKeys: z.array(analyzeApplicantsOutput),
-      rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
-      applicantsData: z.array(analyzeApplicantionOutput),
-      rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+      applicantsWithKeys: z.array(analyseApplicantsOutput),
+      rejectedWithoutKeys: z.array(analyseApplicantsOutput),
+      applicantsData: z.array(analyseApplicantionOutput),
+      incompleteApplicationsData: z.array(analyseApplicantionOutput),
     })
     .describe("Final output of the recruitment workflow"),
   execute: async ({ inputData }) => {
@@ -684,36 +665,37 @@ const mergeResults = createStep({
         applicantsWithKeys: [],
         rejectedWithoutKeys: [],
         applicantsData: [],
-        rejectedApplicantsData: [],
+        incompleteApplicationsData: [],
       };
     }
-    const analyzeRejectedApplicants = inputData["analyze-rejected-applicants"];
-    const analyzeApplicants = inputData["analyze-applicants"];
+    const analyseIncompleteApplications =
+      inputData["analyse-incomplete-applications"];
+    const analyseApplicants = inputData["analyse-applicants"];
 
     const applicantsData =
-      analyzeRejectedApplicants?.applicantsData?.length > 0
-        ? analyzeRejectedApplicants.applicantsData
+      analyseIncompleteApplications?.applicantsData?.length > 0
+        ? analyseIncompleteApplications.applicantsData
         : [];
-    const rejectedApplicantsData =
-      analyzeRejectedApplicants?.rejectedApplicantsData?.length > 0
-        ? analyzeRejectedApplicants.rejectedApplicantsData
+    const incompleteApplicationsData =
+      analyseIncompleteApplications?.incompleteApplicationsData?.length > 0
+        ? analyseIncompleteApplications.incompleteApplicationsData
         : [];
 
     const applicantsWithKeys =
-      analyzeApplicants?.applicantsData?.length > 0
-        ? analyzeApplicants.applicantsData
+      analyseApplicants?.applicantsData?.length > 0
+        ? analyseApplicants.applicantsData
         : [];
 
     const rejectedWithoutKeys =
-      analyzeApplicants?.rejectedApplicantsData?.length > 0
-        ? analyzeApplicants.rejectedApplicantsData
+      analyseApplicants?.incompleteApplicationsData?.length > 0
+        ? analyseApplicants.incompleteApplicationsData
         : [];
 
     return {
       applicantsWithKeys,
       rejectedWithoutKeys,
       applicantsData,
-      rejectedApplicantsData,
+      incompleteApplicationsData,
     };
   },
 });
@@ -722,10 +704,10 @@ const migrateApplicantsWithKeyDetails = createStep({
   id: "migrate-applicants-with-key-details",
   description: "Migrates applicants with key details to next phase",
   inputSchema: z.object({
-    applicantsWithKeys: z.array(analyzeApplicantsOutput),
-    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
-    applicantsData: z.array(analyzeApplicantionOutput),
-    rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+    applicantsWithKeys: z.array(analyseApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyseApplicantsOutput),
+    applicantsData: z.array(analyseApplicantionOutput),
+    incompleteApplicationsData: z.array(analyseApplicantionOutput),
   }),
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
   execute: async ({ inputData: { applicantsWithKeys } }) => {
@@ -762,24 +744,27 @@ const informToResend = createStep({
   id: "inform-to-resend",
   description: "informs the applicant to re-apply with required details",
   inputSchema: z.object({
-    applicantsWithKeys: z.array(analyzeApplicantsOutput),
-    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
-    applicantsData: z.array(analyzeApplicantionOutput),
-    rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+    applicantsWithKeys: z.array(analyseApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyseApplicantsOutput),
+    applicantsData: z.array(analyseApplicantionOutput),
+    incompleteApplicationsData: z.array(analyseApplicantionOutput),
   }),
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
   execute: async ({ inputData: { rejectedWithoutKeys } }) => {
     for (let mail of rejectedWithoutKeys) {
       if (!mail.userEmail) continue;
 
-      const confirmationMailResp = await sendThreadReplyEmail({
+      await sendThreadReplyEmail({
         name: mail.name || "",
         position: mail.keyDetails?.position || "unclear",
         userEmail: mail.userEmail,
-        subject: "Missing Details for Your Application",
+        subject: mail.subject,
         threadId: mail.threadId,
-        emailId: mail.emailId,
+        emailId: mail.id,
+        inReplyTo: mail.messageId,
+        references: [mail.messageId],
         templateId: "templates-request_key_details-resend_key_details",
+        addLabelIds: ["APPLICANTS"],
       });
     }
 
@@ -791,10 +776,10 @@ const migrateConfirmedApplicants = createStep({
   id: "migrate-confirmed-applicants",
   description: "Migrates confirmed applicants",
   inputSchema: z.object({
-    applicantsWithKeys: z.array(analyzeApplicantsOutput),
-    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
-    applicantsData: z.array(analyzeApplicantionOutput),
-    rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+    applicantsWithKeys: z.array(analyseApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyseApplicantsOutput),
+    applicantsData: z.array(analyseApplicantionOutput),
+    incompleteApplicationsData: z.array(analyseApplicantionOutput),
   }),
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
   execute: async ({ inputData: { applicantsData } }) => {
@@ -811,7 +796,9 @@ const migrateConfirmedApplicants = createStep({
         userEmail: mail.userEmail,
         subject: mail.subject,
         threadId: mail.threadId,
-        emailId: mail.emailId,
+        emailId: mail.id,
+        inReplyTo: mail.messageId,
+        references: [mail.messageId],
         templateId: "templates-confirmation-job_application_received",
         addLabelIds: [applicationCategory, "APPLICANTS"],
         removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
@@ -828,14 +815,14 @@ const informToReApply = createStep({
   id: "inform-to-re-apply",
   description: "informs the applicant to re-apply with required details",
   inputSchema: z.object({
-    applicantsWithKeys: z.array(analyzeApplicantsOutput),
-    rejectedWithoutKeys: z.array(analyzeApplicantsOutput),
-    applicantsData: z.array(analyzeApplicantionOutput),
-    rejectedApplicantsData: z.array(analyzeApplicantionOutput),
+    applicantsWithKeys: z.array(analyseApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyseApplicantsOutput),
+    applicantsData: z.array(analyseApplicantionOutput),
+    incompleteApplicationsData: z.array(analyseApplicantionOutput),
   }),
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
-  execute: async ({ inputData: { rejectedApplicantsData } }) => {
-    for (let mail of rejectedApplicantsData) {
+  execute: async ({ inputData: { incompleteApplicationsData } }) => {
+    for (let mail of incompleteApplicationsData) {
       if (!mail.userEmail) continue;
 
       const missingResume = !mail.hasResume;
@@ -854,7 +841,9 @@ const informToReApply = createStep({
           userEmail: mail.userEmail,
           subject: mail.subject,
           threadId: mail.threadId,
-          emailId: mail.emailId,
+          emailId: mail.id,
+          inReplyTo: mail.messageId,
+          references: [mail.messageId],
           templateId: "templates-rejection-missing_multiple_details",
           addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
@@ -865,7 +854,9 @@ const informToReApply = createStep({
           userEmail: mail.userEmail,
           subject: mail.subject,
           threadId: mail.threadId,
-          emailId: mail.emailId,
+          emailId: mail.id,
+          inReplyTo: mail.messageId,
+          references: [mail.messageId],
           templateId: "templates-rejection-no_resume",
           addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
@@ -876,7 +867,9 @@ const informToReApply = createStep({
           userEmail: mail.userEmail,
           subject: mail.subject,
           threadId: mail.threadId,
-          emailId: mail.emailId,
+          emailId: mail.id,
+          inReplyTo: mail.messageId,
+          references: [mail.messageId],
           templateId: "templates-rejection-no_cover_letter",
           addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
@@ -887,7 +880,9 @@ const informToReApply = createStep({
           userEmail: mail.userEmail,
           subject: mail.subject,
           threadId: mail.threadId,
-          emailId: mail.emailId,
+          emailId: mail.id,
+          inReplyTo: mail.messageId,
+          references: [mail.messageId],
           templateId: "templates-rejection-no_clear_job_position",
           addLabelIds: ["INCOMPLETE_APPLICATIONS"],
         });
@@ -913,42 +908,42 @@ const trackReplyMailsWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  // .then(deduplicateNewlyArrivedMails)
-  // .foreach(extractEmailMetaData)
-  // .then(sortReplyEmails)
-  // .branch([
-  //   [
-  //     async ({ inputData: { applicants } }) => applicants.length > 0,
-  //     analyzeApplicants,
-  //   ],
-  //   [
-  //     async ({ inputData: { rejectedApplicants } }) =>
-  //       rejectedApplicants.length > 0,
-  //     analyzeRejectedApplicants,
-  //   ],
-  // ])
-  // .then(mergeResults)
-  // .branch([
-  //   [
-  //     async ({ inputData: { applicantsWithKeys } }) =>
-  //       applicantsWithKeys.length > 0,
-  //     migrateApplicantsWithKeyDetails,
-  //   ],
-  //   [
-  //     async ({ inputData: { rejectedWithoutKeys } }) =>
-  //       rejectedWithoutKeys.length > 0,
-  //     informToResend,
-  //   ],
-  //   [
-  //     async ({ inputData: { rejectedApplicantsData } }) =>
-  //       rejectedApplicantsData.length > 0,
-  //     informToReApply,
-  //   ],
-  //   [
-  //     async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
-  //     migrateConfirmedApplicants,
-  //   ],
-  // ]);
+  .then(deduplicateNewlyArrivedMails)
+  .foreach(extractEmailMetaData)
+  .then(sortReplyEmails)
+  .branch([
+    [
+      async ({ inputData: { applicants } }) => applicants.length > 0,
+      analyseApplicants,
+    ],
+    [
+      async ({ inputData: { incompleteApplications } }) =>
+        incompleteApplications.length > 0,
+      analyseIncompleteApplications,
+    ],
+  ])
+  .then(mergeResults)
+  .branch([
+    [
+      async ({ inputData: { applicantsWithKeys } }) =>
+        applicantsWithKeys.length > 0,
+      migrateApplicantsWithKeyDetails,
+    ],
+    [
+      async ({ inputData: { rejectedWithoutKeys } }) =>
+        rejectedWithoutKeys.length > 0,
+      informToResend,
+    ],
+    [
+      async ({ inputData: { incompleteApplicationsData } }) =>
+        incompleteApplicationsData.length > 0,
+      informToReApply,
+    ],
+    [
+      async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
+      migrateConfirmedApplicants,
+    ],
+  ]);
 
 trackReplyMailsWorkflow.commit();
 

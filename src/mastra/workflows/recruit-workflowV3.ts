@@ -56,7 +56,7 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:INBOX -label:INCOMPLETE_APPLICATIONS is:unread`,
+      q: `label:INBOX -label:INCOMPLETE_APPLICATIONS`,
       maxResults: 100,
     };
 
@@ -173,16 +173,17 @@ const extractEmailMetaData = createStep({
       const messageId = email.payload?.headers?.find(
         (h) => h.name && h.name.toLowerCase() === "message-id"
       )?.value;
-      const userEmail = email.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[1]
-        .replace(">", "");
-      const name = email.payload?.headers
-        ?.find((h) => h.name === "From")
-        ?.value?.split("<")[0]
-        .trim();
+
+      const userAddress = email.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "from"
+      )?.value;
+
+      const userEmail = userAddress?.split("<")[1]?.replace(">", "");
+
+      const name = userAddress?.split("<")[0].trim();
+
       const subject = email.payload?.headers?.find(
-        (h) => h.name === "Subject"
+        (h) => h.name && h.name.toLowerCase() === "subject"
       )?.value;
 
       const plainTextPart =
@@ -580,7 +581,7 @@ const sendConfirmationEmail = createStep({
         name: mail.name || "",
         position: mail.position || "unclear",
         userEmail: mail.userEmail,
-        subject: `Re: ${mail.subject}`,
+        subject: mail.subject,
         threadId: mail.threadId,
         emailId: mail.id,
         inReplyTo: mail.messageId,
@@ -589,9 +590,6 @@ const sendConfirmationEmail = createStep({
         addLabelIds: [applicationCategory, "APPLICANTS"],
         removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
       });
-
-      console.log("Confirmation email response:", confirmationEmailResp);
-
       if (
         confirmationEmailResp?.labelIds?.includes("SENT") &&
         confirmationEmailResp?.id &&
@@ -631,30 +629,24 @@ const sendConfirmationEmail = createStep({
               await modifyEmailLabels({
                 emailId: mail.id,
                 addLabelIds: ["UNCLEAR_APPLICANTS"],
-                removeLabelIds: [
-                  "INCOMPLETE_APPLICATIONS",
-                ],
+                removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
               });
               continue;
             }
 
-            const result = await sendThreadReplyEmail({
+            await sendThreadReplyEmail({
               name: mail.name || "",
               position: mail.position || "unclear",
               userEmail: mail.userEmail,
-              subject: `Re: ${mail.subject}`,
+              subject: mail.subject,
               threadId: mail.threadId,
               emailId: mail.id,
               inReplyTo: mail.messageId,
               references: [mail.messageId, confirmationMessageId],
               templateId: templateId,
               addLabelIds: [applicationCategory, "APPLICANTS"],
-              removeLabelIds: [
-                "INCOMPLETE_APPLICATIONS",
-              ],
+              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
             });
-
-            console.log("asking additional info result", result);
 
             break;
 
@@ -663,17 +655,14 @@ const sendConfirmationEmail = createStep({
               name: mail.name || "",
               position: mail.position || "unclear",
               userEmail: mail.userEmail,
-              subject:
-                "Application Acknowledged - Request for Additional Information",
+              subject: mail.subject,
               threadId: mail.threadId,
               emailId: mail.id,
               inReplyTo: mail.messageId,
               references: [mail.messageId],
               templateId: "templates-request_key_details-non-tech",
               addLabelIds: [applicationCategory, "APPLICANTS"],
-              removeLabelIds: [
-                "INCOMPLETE_APPLICATIONS",
-              ],
+              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
             });
             break;
 
@@ -682,17 +671,14 @@ const sendConfirmationEmail = createStep({
               name: mail.name || "",
               position: mail.position || "unclear",
               userEmail: mail.userEmail,
-              subject:
-                "Application Acknowledged - Request for Additional Information",
+               subject: mail.subject,
               threadId: mail.threadId,
               emailId: mail.id,
               inReplyTo: mail.messageId,
               references: [mail.messageId],
               templateId: "templates-request_key_details-creative",
               addLabelIds: [applicationCategory, "APPLICANTS"],
-              removeLabelIds: [
-                "INCOMPLETE_APPLICATIONS",
-              ],
+              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
             });
             break;
 
@@ -700,9 +686,7 @@ const sendConfirmationEmail = createStep({
             await modifyEmailLabels({
               emailId: mail.id,
               addLabelIds: ["UNCLEAR_APPLICANTS"],
-              removeLabelIds: [
-                "INCOMPLETE_APPLICATIONS",
-              ],
+              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
             });
             break;
         }

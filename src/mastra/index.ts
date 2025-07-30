@@ -1,41 +1,33 @@
 import { Mastra } from "@mastra/core/mastra";
 import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
-import { weatherWorkflow } from "./workflows/weather-workflow";
-import { gmailGroqAgent, gmailMetaAgent } from "./agents/gmail-agent";
-import { recruitmentWorkflow } from "./workflows/recruitment-workflow";
-import { recruitAgentWorkflow } from "./workflows/recruit-agent-workflow";
-import { recruitWorkflow } from "./workflows/recruit-workflow";
-import { recruitWorkflowV2 } from "./workflows/recruit-workflowV2";
+import { gmailGroqAgent } from "./agents/gmail-agent";
 import { recruitWorkflowV3 } from "./workflows/recruit-workflowV3";
 
-import express from "express";
-import cron from "node-cron";
 import { trackReplyMailsWorkflow } from "./workflows/track-reply-mails-workflow";
 import { contextQAAgent } from "./agents/contextQA-agent";
 import { webCrawlerAgent } from "./agents/webCrawler-agent";
-import { ragAgent } from "./agents/rag-Agent";
 import { jobCrawlerWorkflow } from "./workflows/job-crawler-workflow";
+
+import express from "express";
+import cron from "node-cron";
+import jobOpeningsRoutes from "./routes/jobOpeningsRoutes";
 
 const app = express();
 const port = process.env.NODE_PORT || 5000;
 
 export const mastra = new Mastra({
   workflows: {
-    weatherWorkflow,
-    recruitmentWorkflow,
-    recruitAgentWorkflow,
-    recruitWorkflow,
-    recruitWorkflowV2,
-
     // current recruit workflow
     recruitWorkflowV3,
     trackReplyMailsWorkflow,
-    jobCrawlerWorkflow
+    jobCrawlerWorkflow,
   },
-  agents: { gmailMetaAgent, gmailGroqAgent, contextQAAgent, 
-    webCrawlerAgent, ragAgent
-   },
+  agents: {
+    gmailGroqAgent,
+    contextQAAgent,
+    webCrawlerAgent,
+  },
   storage: new LibSQLStore({
     // stores telemetry, evals, ... into memory storage, if it needs to persist, change to file:../mastra.db
     url: "file:../mastra.db",
@@ -49,6 +41,8 @@ export const mastra = new Mastra({
 app.get("/", (req, res) => {
   res.send("server is up and running");
 });
+
+app.use("/api/jobopenings", jobOpeningsRoutes);
 
 const executeWorkflow = async (workflowId: string) => {
   if (!workflowId) return;

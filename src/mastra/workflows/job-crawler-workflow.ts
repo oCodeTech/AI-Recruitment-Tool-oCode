@@ -1,7 +1,5 @@
 import { createStep, createWorkflow } from "@mastra/core";
 import z from "zod";
-import { redis } from "../../queue/connection";
-import puppeteer from "puppeteer";
 
 import * as fs from "fs";
 import path from "path";
@@ -9,188 +7,83 @@ import { fileURLToPath } from "url";
 
 const JobOpeningSchema = z
   .object({
-    title: z.string(),
+    position: z.string(),
     category: z.string(),
     type: z.string(),
+    schedule: z.string(),
     location: z.string(),
-    salary: z.string(),
+    salaryRange: z.string(),
     description: z.string(),
-    keyResponsibiliites: z.array(
-      z
-        .object({
-          responsibility: z.string(),
-          detail: z.string(),
-        })
-        .nullable()
-    ),
-    requirements: z.array(
-      z
-        .object({
-          requirement: z.string(),
-          detail: z.string(),
-        })
-        .nullable()
-    ),
-    experience: z.string(),
+    keyResponsibilites: z.array(z.string()),
+    requirements: z.array(z.string()),
+    qualifications: z.array(z.string()),
+    experienceRequired: z.string(),
   })
-  .nullable();
+  .nullable()
+  .describe("Job opening details");
+
+/*
+  dummy json for testing
+
+{
+  "position": "Software Engineer",
+  "category": "Technology",
+  "type": "Full-time",
+  "schedule": "Regular",
+  "location": "Remote",
+  "salaryRange": "100000-150000",
+  "description": "We are looking for a skilled software engineer to join our team. The ideal candidate will have a strong background in computer science and software engineering principles.",
+  "keyResponsibilites": [
+    "Design, develop, test, deploy, maintain and improve software",
+    "Collaborate with cross-functional teams to identify and prioritize project requirements",
+    "Troubleshoot and resolve complex technical issues",
+    "Develop and maintain technical documentation",
+    "Participate in code reviews and contribute to the improvement of the overall code quality"
+  ],
+  "requirements": [
+    "Bachelor's degree in Computer Science or related field",
+    "5+ years of experience in software development",
+    "Experience with distributed systems, cloud computing and containerization",
+    "Strong understanding of computer science fundamentals (data structures, algorithms, software design patterns)",
+    "Experience with Agile development methodologies",
+    "Strong communication and collaboration skills",
+    "Experience with AWS or Google Cloud"
+  ],
+  "qualifications": [
+    "Experience with Kubernetes",
+    "Experience with serverless computing",
+    "Experience with CI/CD pipelines",
+    "Strong understanding of security best practices",
+    "Experience with containerization using Docker"
+  ],
+  "experienceRequired": "5-10"
+}
+  */
 
 const jobCrawlTrigger = createStep({
   id: "job-crawl-trigger",
   description: "Triggers the workflow when new job openings are found",
-  inputSchema: z
-    .object({
-      url: z.string(),
-    })
-    .describe("Job Opening details"),
-  outputSchema: z
-    .object({
-      hostname: z.string().describe("Job Opening hostname"),
-      url: z.string().describe("Job Opening URL"),
-    })
-    .nullable(),
-  execute: async ({ inputData: { url } }) => {
-    if (!url) {
-      console.error("No job opening URL found");
+  inputSchema: JobOpeningSchema,
+  outputSchema: JobOpeningSchema,
+  execute: async ({ inputData }) => {
+    if (!inputData) {
+      console.error("No job opening data found");
       return null;
     }
 
     try {
-      // const alreadyProcessed = await redis.get(`processed_job_opening:${url}`);
-      // if (alreadyProcessed) {
-      //   console.log(`Job opening ${url} already processed, skipping`);
-      //   return null;
-      // }
+      const jobOpeningParseResult =
+        JobOpeningSchema.safeParse(inputData).success;
 
-      // await redis.set(`processed_job_opening:${url}`, "1", "EX", 3600);
+      if (!jobOpeningParseResult) {
+        console.error("Invalid job opening data");
+        return null;
+      }
 
-      const jobOpeningUrl = new URL(url);
-
-      if (!jobOpeningUrl.hostname) return null;
-
-      return {
-        url,
-        hostname: jobOpeningUrl.hostname,
-      };
+      return inputData;
     } catch (err) {
       console.log(err);
       return null;
-    }
-  },
-});
-
-const handleWebCrawler = createStep({
-  id: "handle-web-crawler",
-  description: "Handles the web crawler",
-  inputSchema: z
-    .object({
-      hostname: z.string().describe("Job Opening hostname"),
-      url: z.string().describe("Job Opening URL"),
-    })
-    .nullable(),
-  outputSchema: JobOpeningSchema,
-  execute: async ({ inputData }) => {
-    if (!inputData || !inputData.url) return null;
-
-    const url = inputData.url;
-
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox"],
-    });
-    const page = await browser.newPage();
-
-    try {
-      await page.goto(url, { waitUntil: "networkidle2", timeout: 0 });
-      await page.waitForSelector(".awsm-job-container", { timeout: 30000 });
-
-      const jobData = await page.evaluate(() => {
-        const title =
-          document
-            .querySelector(".awsm-jobs-single-title")
-            ?.textContent?.trim() || "";
-        const category =
-          document
-            .querySelector(
-              ".awsm-job-specification-job-category .awsm-job-specification-term"
-            )
-            ?.textContent?.trim() || "";
-        const type =
-          document
-            .querySelector(
-              ".awsm-job-specification-job-type .awsm-job-specification-term"
-            )
-            ?.textContent?.trim() || "";
-        const location =
-          document
-            .querySelector(
-              ".awsm-job-specification-job-location .awsm-job-specification-term"
-            )
-            ?.textContent?.trim() || "";
-
-        const salaryElements = document.querySelectorAll(
-          ".awsm-job-specification-salary .awsm-job-specification-term"
-        );
-        const salary =
-          Array.from(salaryElements)
-            .map((element) => element.textContent?.trim() || "")
-            .join(", ") || "";
-
-        const description =
-          Array.from(
-            document.querySelectorAll(".awsm-job-entry-content p")
-          )[0]?.textContent?.trim() || "";
-
-        const keyResponsibiliites =
-          Array.from(document.querySelectorAll(".awsm-job-entry-content ul"))[0]
-            ?.textContent?.trim()
-            .split("\n")
-            .map((item) => {
-              const [key, value] = item.split(":");
-
-              return { responsibility: key.trim(), detail: value.trim() };
-            }) || [];
-
-        const requirements =
-          Array.from(document.querySelectorAll(".awsm-job-entry-content ul"))[1]
-            ?.textContent?.trim()
-            .split("\n")
-            .map((item) => {
-              const [key, value] = item.split(":");
-
-              return { requirement: key.trim(), detail: value.trim() };
-            }) || [];
-
-        const experienceLi = Array.from(
-          document.querySelectorAll(".awsm-job-entry-content ul li")
-        ).find(
-          (li) => li.textContent && li.textContent.includes("Total work:")
-        );
-
-        const experience =
-          experienceLi && experienceLi.textContent
-            ? experienceLi.textContent.trim()
-            : "";
-
-        return {
-          title,
-          category,
-          type,
-          location,
-          salary,
-          description,
-          keyResponsibiliites,
-          requirements,
-          experience,
-        };
-      });
-
-      return jobData;
-    } catch (error) {
-      console.error("Error crawling:", error);
-      return null;
-    } finally {
-      await browser.close();
     }
   },
 });
@@ -210,7 +103,7 @@ const indexJobOpening = createStep({
       __dirname,
       "../../src/mastra/job-openings"
     );
-    const filePath = path.join(jobOpeningsDir, `jobOpening.json-${Date.now()}`);
+    const filePath = path.join(jobOpeningsDir, `jobOpening-${Date.now()}.json`);
 
     try {
       if (!fs.existsSync(jobOpeningsDir)) {
@@ -219,14 +112,49 @@ const indexJobOpening = createStep({
 
       fs.writeFileSync(filePath, JSON.stringify(inputData));
 
-      const ragAgent = mastra?.getAgent("ragAgent");
+      const contextQAAgent = mastra?.getAgent("contextQAAgent");
 
-      if (!ragAgent) throw Error("RAG agent not found");
+      if (!contextQAAgent) throw Error("RAG agent not found");
+
+      console.log("job opening file created at path:", filePath);
+
+      try {
+        const supportedFileTypes = [".json", ".jsonl", ".txt", ".md", ".csv"];
+        const fileExtension = filePath
+          .slice(filePath.lastIndexOf("."))
+          .toLowerCase();
+
+        if (!supportedFileTypes.includes(fileExtension)) {
+          throw new Error(
+            `Unsupported file type: ${fileExtension}. Supported types: ${supportedFileTypes.join(", ")}`
+          );
+        }
+
+        const instructions = [
+          `Read the file at path: ${filePath}.`,
+          `Embed its content for RAG and store the result in the database.`,
+          `The file type is ${fileExtension}.`,
+        ].join(" ");
+
+        const indexResult = await contextQAAgent.generate(
+          `Index file at path ${filePath}`,
+          {
+            instructions,
+            maxSteps: 5,
+            maxTokens: 400,
+          }
+        );
+        console.log("Indexing completed:", indexResult.text);
+
+        return indexResult.text;
+      } catch (error) {
+        console.error("Error during RAG indexing:", error);
+        return "Error during RAG indexing";
+      }
     } catch (error) {
       console.error("Error occured while indexing the job opening:", error);
+      return "Error occured while indexing the job opening";
     }
-
-    return "";
   },
 });
 
@@ -234,7 +162,7 @@ const jobCrawlerWorkflow = createWorkflow({
   id: "job-crawler-workflow",
   description:
     "Workflow to handle job descriptions scraping and document embedding to the index",
-  inputSchema: z.object({ url: z.string() }).describe("Job Opening URL"),
+  inputSchema: JobOpeningSchema,
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
   steps: [jobCrawlTrigger],
   retryConfig: {
@@ -243,7 +171,6 @@ const jobCrawlerWorkflow = createWorkflow({
   },
 })
   .then(jobCrawlTrigger)
-  .then(handleWebCrawler)
   .then(indexJobOpening);
 
 jobCrawlerWorkflow.commit();

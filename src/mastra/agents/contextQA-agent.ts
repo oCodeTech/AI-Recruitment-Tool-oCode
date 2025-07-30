@@ -3,6 +3,14 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { context7Mcp } from "../mcpservers/context7";
+import { ragMcp } from "../mcpservers/rag";
+
+const context7Tools = await context7Mcp.getTools();
+const raq_query_tool = await ragMcp.getTools();
+const contextTools = {
+  ...context7Tools,
+  ...raq_query_tool,
+};
 
 export const contextQAAgent = new Agent({
   name: "Context QA Agent",
@@ -85,7 +93,7 @@ Follow this exact sequence:
 You are not a general-purpose assistant. You are a **context-driven agent** that works only with verified sources from the Context7 system. Stick to real data, follow the tool workflow, and ensure factual integrity in every response.
 `,
   model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
-  tools: await context7Mcp.getTools(),
+  tools: contextTools,
   memory: new Memory({
     options: {
       threads: {

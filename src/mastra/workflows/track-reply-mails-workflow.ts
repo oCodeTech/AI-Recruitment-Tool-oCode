@@ -115,7 +115,7 @@ const deduplicateNewlyArrivedMails = createStep({
         );
         if (alreadyProcessed) {
           console.log(`Thread ID ${threadId} already processed, skipping`);
-          
+
           continue;
         }
 
@@ -482,35 +482,38 @@ const analyseIncompleteApplications = createStep({
         ?.filter((p) => p.body?.attachmentId)
         .map((p) => p.body?.attachmentId);
 
-      const hasCoverLetter = containsKeyword({
-        text: mail.body,
-        keywords: [
-          "cover letter",
-          "application",
-          "about me",
-          "summary",
-          "objective",
-          "job description",
-          "responsibilities",
-          "motivated",
-          "interested",
-          "experience",
-          "skills",
-          "education",
-          "background",
-          "contributions",
-          "achievements",
-          "qualifications",
-          "passionate about",
-          "strong background",
-          "enthusiastic",
-          "dedicated",
-          "highly motivated",
-          "detail-oriented",
-          "achieving excellence",
-        ],
-      });
-     const hasResume =
+      const hasCoverLetter =
+        containsKeyword({
+          text: mail.body,
+          keywords: [
+            "cover letter",
+            "job application",
+            "work experience",
+            "skills",
+            "education",
+            "summary",
+            "objective",
+            "responsibilities",
+            "keen interest",
+            "strong background",
+            "software development",
+            "contribute positively",
+            "scalable web applications",
+            "optimizing database performance",
+            "highly motivated",
+            "detail-oriented",
+            "achieving excellence",
+            "qualifications",
+            "dear hiring manager",
+            "i am excited to apply",
+            "thank you for considering",
+            "my current role",
+            "your team",
+          ],
+        }) &&
+        mail.body.length >= 300 &&
+        mail.body.trim().split(/\s+/).length >= 60;
+      const hasResume =
         attachmentId?.length && attachment_filename?.length
           ? containsKeyword({
               text: attachment_filename?.[0] || "",
@@ -538,7 +541,6 @@ const analyseIncompleteApplications = createStep({
               text: mail.body || "",
               keywords: ["resume", "Resume", "cv", "CV"],
             });
-
 
       const emailMetaData = {
         id: mail.id,

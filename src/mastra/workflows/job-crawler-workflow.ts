@@ -1,10 +1,10 @@
 import { createStep, createWorkflow } from "@mastra/core";
-import z from "zod";
 
 import * as fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import z from "zod";
 const JobOpeningSchema = z
   .object({
     position: z.string(),

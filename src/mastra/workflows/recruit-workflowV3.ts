@@ -213,35 +213,38 @@ const extractEmailMetaData = createStep({
         attachmentId: attachmentId || [],
       };
 
-      const hasCoverLetter = containsKeyword({
-        text: decodedBody,
-        keywords: [
-          "cover letter",
-          "resume",
-          "cv",
-          "job application",
-          "job",
-          "application",
-          "work experience",
-          "skills",
-          "education",
-          "about me",
-          "summary",
-          "objective",
-          "job description",
-          "responsibilities",
-          "keen interest",
-          "strong background",
-          "software development",
-          "contribute positively",
-          "scalable web applications",
-          "optimizing database performance",
-          "highly motivated",
-          "detail-oriented",
-          "achieving excellence",
-          "qualifications",
-        ],
-      });
+     const hasCoverLetter =
+       containsKeyword({
+         text: decodedBody,
+         keywords: [
+           "cover letter",
+           "job application",
+           "work experience",
+           "skills",
+           "education",
+           "summary",
+           "objective",
+           "responsibilities",
+           "keen interest",
+           "strong background",
+           "software development",
+           "contribute positively",
+           "scalable web applications",
+           "optimizing database performance",
+           "highly motivated",
+           "detail-oriented",
+           "achieving excellence",
+           "qualifications",
+           "dear hiring manager",
+           "i am excited to apply",
+           "thank you for considering",
+           "my current role",
+           "your team",
+         ],
+       }) &&
+       decodedBody.length >= 300 &&
+       decodedBody.trim().split(/\s+/).length >= 60;
+
       const hasResume =
         attachmentId?.length && attachment_filename?.length
           ? containsKeyword({

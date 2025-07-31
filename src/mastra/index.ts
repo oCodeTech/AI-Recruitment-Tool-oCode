@@ -10,11 +10,24 @@ import { webCrawlerAgent } from "./agents/webCrawler-agent";
 import { jobCrawlerWorkflow } from "./workflows/job-crawler-workflow";
 
 import express from "express";
+import cors from "cors";
 import cron from "node-cron";
 import jobOpeningsRoutes from "./routes/jobOpeningsRoutes";
+import { ragAgent } from "./agents/rag-agent";
+import { containsKeyword } from "../utils/gmail";
 
 const app = express();
 const port = process.env.NODE_PORT || 5000;
+
+app.use(
+  cors({
+    origin: process.env.FRONTEND_ORIGIN,
+  })
+);
+
+app.use(express.json());
+
+app.use(express.urlencoded({ extended: true }));
 
 export const mastra = new Mastra({
   workflows: {
@@ -25,6 +38,7 @@ export const mastra = new Mastra({
   },
   agents: {
     gmailGroqAgent,
+    ragAgent,
     contextQAAgent,
     webCrawlerAgent,
   },

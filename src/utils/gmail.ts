@@ -1,5 +1,5 @@
 import { gmail_v1 } from "googleapis";
-import { getGmailClient } from "../OAuth/gmailClient";
+import { getGmailClient } from "../OAuth/getGmailClient";
 
 interface EmailData {
   to: string | null;
@@ -10,9 +10,9 @@ interface EmailData {
   threadId: string;
 }
 
-const gmailClient = await getGmailClient();
+const gmailClient = await getGmailClient('vivek@ocode.co'); //use actual user email address like hi@ocode.co in real world
 
-const resolveLabelIds = async (labels: string[]) => {
+ const resolveLabelIds = async (labels: string[]) => {
   const existingLabels = await gmailClient.users.labels.list({
     userId: "me",
   });

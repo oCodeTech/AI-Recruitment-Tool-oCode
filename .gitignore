@@ -3,6 +3,7 @@ node_modules
 dist
 .mastra
 job-openings
+service-account.json
 .env.development
 .env
 *.db

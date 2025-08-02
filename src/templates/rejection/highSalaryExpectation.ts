@@ -8,4 +8,8 @@ After careful consideration, we regret to inform you that we are unable to proce
 We sincerely appreciate the time you invested in the interview process and the opportunity to learn more about your skills and background. Should our budgetary circumstances change or if a suitable opportunity arises in the future, we will certainly keep your profile in mind.
 
 Thank you once again for your interest in our company, and we wish you all the best in your future endeavors.
+
+Best regards,
+The Recruitment Team
+[Company Name]
 `;

@@ -11,4 +11,8 @@ If certain fields do not apply to you, please feel free to mark them as â€œN/A.â
 
 
 We appreciate your cooperation and look forward to receiving the clarified details soon. Should you have any questions or require further assistance, feel free to reach out.
+
+Best regards,
+The Recruitment Team
+[Company Name]
 `;

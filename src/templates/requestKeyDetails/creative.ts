@@ -24,4 +24,8 @@ At [Company Name], we pride ourselves on being a value and technology-driven fir
 To learn more about us and stay connected, we invite you to visit our website at oCode Tech and like our page on Facebook.
 
 If you have any queries or require further information, please feel free to ask. We eagerly await your response and hope to hear from you soon.
+
+Best regards,
+The Recruitment Team
+[Company Name]
 `;

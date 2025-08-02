@@ -9,7 +9,7 @@ import {
   sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
-import { decodeEmailBody, extractJsonFromResult } from "./recruit-workflowV3";
+import { decodeEmailBody, extractJsonFromResult } from "./recruitment-pre-stage-workflow";
 
 interface ApplicantKeyDetails {
   position: string;

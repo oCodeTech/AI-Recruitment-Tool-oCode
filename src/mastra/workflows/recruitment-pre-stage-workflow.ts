@@ -671,7 +671,7 @@ const sendConfirmationEmail = createStep({
 });
 
 const recruitWorkflowV3 = createWorkflow({
-  id: "recruit-V3",
+  id: "recruitment-pre-stage-workflow",
   description:
     "Workflow to handle recruitment tasks with an agent triggered by Gmail events",
   inputSchema: z.boolean().describe("Signal to start the workflow"),
@@ -694,33 +694,33 @@ const recruitWorkflowV3 = createWorkflow({
   .then(AgentTrigger)
   .foreach(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
-  .then(sortEmailData)
-  .branch([
-    [
-      async ({ inputData: { missingResumeEmails } }) =>
-        missingResumeEmails.length > 0,
-      sendResumeMissingMail,
-    ],
-    [
-      async ({ inputData: { missingCoverLetterEmails } }) =>
-        missingCoverLetterEmails.length > 0,
-      sendCoverLetterMissingEmail,
-    ],
-    [
-      async ({ inputData: { unclearPositionEmails } }) =>
-        unclearPositionEmails.length > 0,
-      sendUnclearPositionEmail,
-    ],
-    [
-      async ({ inputData: { multipleMissingDetailsEmails } }) =>
-        multipleMissingDetailsEmails.length > 0,
-      sendMultipleRejectionReasonsMail,
-    ],
-    [
-      async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
-      sendConfirmationEmail,
-    ],
-  ]);
+  // .then(sortEmailData)
+  // .branch([
+  //   [
+  //     async ({ inputData: { missingResumeEmails } }) =>
+  //       missingResumeEmails.length > 0,
+  //     sendResumeMissingMail,
+  //   ],
+  //   [
+  //     async ({ inputData: { missingCoverLetterEmails } }) =>
+  //       missingCoverLetterEmails.length > 0,
+  //     sendCoverLetterMissingEmail,
+  //   ],
+  //   [
+  //     async ({ inputData: { unclearPositionEmails } }) =>
+  //       unclearPositionEmails.length > 0,
+  //     sendUnclearPositionEmail,
+  //   ],
+  //   [
+  //     async ({ inputData: { multipleMissingDetailsEmails } }) =>
+  //       multipleMissingDetailsEmails.length > 0,
+  //     sendMultipleRejectionReasonsMail,
+  //   ],
+  //   [
+  //     async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
+  //     sendConfirmationEmail,
+  //   ],
+  // ]);
 
 recruitWorkflowV3.commit();
 

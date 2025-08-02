@@ -10,4 +10,8 @@ Please know that our decision does not reflect on your skills or potential. We r
 We sincerely appreciate your interest in our company and wish you the very best in your job search. Your application will remain on file with us, and we will reach out should a suitable opportunity arise in the future that matches your qualifications.
 
 Thank you again for considering [Company Name] as a potential employer. If you have any questions or would like feedback on your application, please feel free to reach out. We are here to assist you in any way we can.
+
+Best regards,
+The Recruitment Team
+[Company Name]
 `;

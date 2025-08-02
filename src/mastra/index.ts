@@ -1,8 +1,7 @@
 import { Mastra } from "@mastra/core/mastra";
 import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
-import { gmailGroqAgent } from "./agents/gmail-agent";
-import { decodeEmailBody, recruitWorkflowV3 } from "./workflows/recruit-workflowV3";
+import { recruitWorkflowV3 } from "./workflows/recruitment-pre-stage-workflow";
 
 import { trackReplyMailsWorkflow } from "./workflows/track-reply-mails-workflow";
 import { contextQAAgent } from "./agents/contextQA-agent";
@@ -37,7 +36,6 @@ export const mastra = new Mastra({
     jobCrawlerWorkflow,
   },
   agents: {
-    gmailGroqAgent,
     ragAgent,
     contextQAAgent,
     webCrawlerAgent,
@@ -84,60 +82,6 @@ const executeWorkflow = async (workflowId: string) => {
     return Promise.reject(error);
   }
 };
-
-const gmailSearchEmails = async (searchProps: {
-  userId?: string;
-  q: string;
-  labelIds?: string[];
-  maxResults?: number;
-}) => {
-  try {
-    const gmailClient = await getGmailClient("hi@ocode.co");
-
-    const res = await gmailClient.users.messages.list({
-      userId: "me",
-      labelIds: ["INBOX"],
-      ...searchProps,
-    });
-
-    const latestEmails = res.data.messages || [];
-
-    const fullMessages = await Promise.all(
-      latestEmails.map(async (message) => {
-        const email = await gmailClient.users.messages.get({
-          userId: "me",
-          id: message.id || "",
-        });
-
-        const parsedEmailData = {
-          from: email.data.payload?.headers
-            ?.find((header) => header.name === "From")
-            ?.value?.trim(),
-          subject: email.data.payload?.headers
-            ?.find((header) => header.name === "Subject")
-            ?.value?.trim(),
-          snippet: email.data.snippet?.trim(),
-          date: email.data.payload?.headers
-            ?.find((header) => header.name === "Date")
-            ?.value?.trim(),
-        };
-
-        return parsedEmailData;
-      })
-    );
-
-    console.table(fullMessages);
-  } catch (error) {
-    throw error;
-  }
-};
-const searchInboxInput = {
-  userId: "me",
-  q: `label:inbox from:consulting@ocode.co`,
-  maxResults: 1000,
-};
-
-gmailSearchEmails(searchInboxInput);
 
 cron.schedule("0 */2 * * *", () => {
   console.log(" Executing recruitment workflows...");

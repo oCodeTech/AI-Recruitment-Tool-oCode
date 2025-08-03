@@ -1,7 +1,7 @@
 import { Mastra } from "@mastra/core/mastra";
 import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
-import { recruitWorkflowV3 } from "./workflows/recruitment-pre-stage-workflow";
+import { recruitmentPreStageWorkflow } from "./workflows/recruitment-pre-stage-workflow";
 
 import { trackReplyMailsWorkflow } from "./workflows/track-reply-mails-workflow";
 import { contextQAAgent } from "./agents/contextQA-agent";
@@ -14,6 +14,7 @@ import cron from "node-cron";
 import jobOpeningsRoutes from "./routes/jobOpeningsRoutes";
 import { ragAgent } from "./agents/rag-agent";
 import { getGmailClient } from "../OAuth/getGmailClient";
+import { getEmailContent, gmailSearchEmails } from "../utils/gmail";
 
 const app = express();
 const port = process.env.NODE_PORT || 5000;
@@ -31,7 +32,7 @@ app.use(express.urlencoded({ extended: true }));
 export const mastra = new Mastra({
   workflows: {
     // current recruit workflow
-    recruitWorkflowV3,
+    recruitmentPreStageWorkflow,
     trackReplyMailsWorkflow,
     jobCrawlerWorkflow,
   },
@@ -83,10 +84,75 @@ const executeWorkflow = async (workflowId: string) => {
   }
 };
 
+const getCurrentLabels = async () => {
+  try {
+    const gmailClient = await getGmailClient("hi@ocode.co");
+
+    // for Inbox
+    const searchInboxInput = {
+      userId: "me",
+      q: `label:INBOX`,
+      maxResults: 20,
+    };
+    const searchResult = await gmailSearchEmails(searchInboxInput);
+
+    const inboxMails = [];
+    
+    for (let mail of searchResult) {
+      if(!mail.id) continue;
+      const data = await getEmailContent(mail.id);
+
+      if(!data) continue;
+
+      const mailContent = {
+        from : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "from")?.value,
+        subject : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "subject")?.value,
+        snippet : data?.snippet
+      }
+
+      inboxMails.push(mailContent);
+    }
+
+    console.table(inboxMails);
+
+
+    // for Labels
+    // const {data: {labels: res} } = await gmailClient.users.labels.list({
+    //   userId: "me"
+    // });
+
+    // console.table(res);
+
+
+    // for sent mails
+// const searchInboxInput = {
+//       userId: "me",
+//       q: `label:SENT`,
+//       maxResults: 20,
+//     };
+//  const searchResult = await gmailSearchEmails(searchInboxInput);
+
+//     console.log(searchResult)
+
+
+//     for (let mail of searchResult) {
+
+//       if(!mail.id) continue;
+//       const data = await getEmailContent(mail.id)
+//       console.log(data)
+//     }
+
+  } catch (error) {
+    throw error;
+  }
+};
+
+getCurrentLabels();
+
 cron.schedule("0 */2 * * *", () => {
   console.log(" Executing recruitment workflows...");
 
-  const workflowIds = ["recruitWorkflowV3", "trackReplyMailsWorkflow"];
+  const workflowIds = ["recruitmentPreStageWorkflow", "trackReplyMailsWorkflow"];
 
   Promise.allSettled(
     workflowIds.map((workflowId) => executeWorkflow(workflowId))

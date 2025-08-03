@@ -12,9 +12,14 @@ import { redis } from "../../queue/connection";
 import { gmail_v1 } from "googleapis";
 
 const recruitmentMail = process.env.RECRUITMENT_MAIL;
+const consultingMail = process.env.CONSULTING_MAIL;
 
 if (!recruitmentMail) {
   throw new Error("RECRUITMENT_MAIL environment variable is not set");
+}
+
+if (!consultingMail) {
+  throw new Error("CONSULTING_MAIL environment variable is not set");
 }
 export const decodeEmailBody = (
   encodedBody: gmail_v1.Schema$MessagePart | undefined
@@ -22,6 +27,14 @@ export const decodeEmailBody = (
   const bodyEncoded = encodedBody?.body?.data || "";
   return Buffer.from(bodyEncoded, "base64").toString("utf8");
 };
+
+export const extractEmailAndName = (emailString: string | null | undefined): { email: string | null, name: string | null } => {
+        if (!emailString) return { email: null, name: null };
+        const emailMatch = emailString.match(/<(.+?)>/);
+        const name = emailString.split("<")[0].trim();
+        const email = emailMatch ? emailMatch[1] : emailString.trim();
+        return { email, name };
+      };
 
 export const extractJsonFromResult = (result: string) => {
   const match = result.match(/\{.*\}/s);
@@ -56,8 +69,8 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:inbox -label:incomplete_applications (from:code@ocode.co OR from:vivek@ocode.co)`,
-      maxResults: 100,
+      q: `label:inbox -label:pre-stage`,
+      maxResults: 20,
     };
 
     try {
@@ -144,6 +157,12 @@ const ExtractEmailMetaDataOutput = z
 const extractEmailMetaData = createStep({
   id: "extract-email-meta-data",
   description: "Extracts email metadata by email ID and thread ID",
+  // for development
+  // inputSchema: z.object({
+  //   id: z.string().nullable().optional(),
+  //   threadId: z.string().nullable().optional(),
+  // }),
+  // for production
   inputSchema: z
     .object({
       id: z.string(),
@@ -164,6 +183,13 @@ const extractEmailMetaData = createStep({
     try {
       const { id, threadId } = inputData;
 
+      if (!id || !threadId) {
+        console.log(
+          "Email ID or thread ID not found for extract-email-meta-data step"
+        );
+        return null;
+      }
+
       const threadMessages = await getThreadMessages(threadId);
 
       if (threadMessages && threadMessages.length > 1) return null;
@@ -178,9 +204,17 @@ const extractEmailMetaData = createStep({
         (h) => h.name && h.name.toLowerCase() === "from"
       )?.value;
 
-      const userEmail = userAddress?.split("<")[1]?.replace(">", "");
+      const replyToAddress = email.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "reply-to"
+      )?.value;
 
-      const name = userAddress?.split("<")[0].trim();
+      const { email: userEmail, name } = userAddress?.includes(consultingMail) && replyToAddress
+        ? extractEmailAndName(replyToAddress)
+        : extractEmailAndName(userAddress);
+
+        if(!userEmail?.includes("@gmail.com")){
+          return null
+        }
 
       const subject = email.payload?.headers?.find(
         (h) => h.name && h.name.toLowerCase() === "subject"
@@ -213,37 +247,37 @@ const extractEmailMetaData = createStep({
         attachmentId: attachmentId || [],
       };
 
-     const hasCoverLetter =
-       containsKeyword({
-         text: decodedBody,
-         keywords: [
-           "cover letter",
-           "job application",
-           "work experience",
-           "skills",
-           "education",
-           "summary",
-           "objective",
-           "responsibilities",
-           "keen interest",
-           "strong background",
-           "software development",
-           "contribute positively",
-           "scalable web applications",
-           "optimizing database performance",
-           "highly motivated",
-           "detail-oriented",
-           "achieving excellence",
-           "qualifications",
-           "dear hiring manager",
-           "i am excited to apply",
-           "thank you for considering",
-           "my current role",
-           "your team",
-         ],
-       }) &&
-       decodedBody.length >= 300 &&
-       decodedBody.trim().split(/\s+/).length >= 60;
+      const hasCoverLetter =
+        containsKeyword({
+          text: decodedBody,
+          keywords: [
+            "cover letter",
+            "job application",
+            "work experience",
+            "skills",
+            "education",
+            "summary",
+            "objective",
+            "responsibilities",
+            "keen interest",
+            "strong background",
+            "software development",
+            "contribute positively",
+            "scalable web applications",
+            "optimizing database performance",
+            "highly motivated",
+            "detail-oriented",
+            "achieving excellence",
+            "qualifications",
+            "dear hiring manager",
+            "i am excited to apply",
+            "thank you for considering",
+            "my current role",
+            "your team",
+          ],
+        }) &&
+        decodedBody.length >= 300 &&
+        decodedBody.trim().split(/\s+/).length >= 60;
 
       const hasResume =
         attachmentId?.length && attachment_filename?.length
@@ -275,8 +309,8 @@ const extractEmailMetaData = createStep({
             });
 
       try {
-        const grokAgent = mastra.getAgent("gmailGroqAgent");
-        const result = await grokAgent.generate(
+        const agent = mastra.getAgent("contextQAAgent");
+        const result = await agent.generate(
           "Analyze the email subject, body and application to determine the most likely job title the candidate is applying for, experience status and category. Output only a JSON object with the job title, experience status and category or 'unclear'.",
           {
             instructions: `
@@ -289,28 +323,24 @@ const extractEmailMetaData = createStep({
       - If multiple job titles are possible, return the one most strongly indicated by the content.
       - If no job title can be reasonably and confidently inferred, return 'unclear'.
       - Determine the category based on the job title and body of the email. If unsure, return 'unclear'.
-      - The category can be one of the following values: TECH, NON-TECH, CREATIVE
-      - Output only a JSON object in the following format: {"job_title": "<job title or 'unclear'>", "experience_status": "<fresher or experienced or 'unclear'>", "category": "<TECH or NON-TECH or CREATIVE or 'unclear'>"}
+      - The category can be one of the following values: Developer, Web Designer, Recruiter, Sales / Marketing
+      - Output only a JSON object in the following format: {"job_title": "<job title or 'unclear'>", "experience_status": "<fresher or experienced or 'unclear'>", "category": "<Developer or Web Designer or Recruiter or Sales / Marketing or 'unclear'>"}
       Examples:
       Subject: "Applying for full stack developer"
       Body: "I am writing to express my interest in the Full Stack Web Developer role. My background in both front-end and back-end development positions me to contribute effectively to your team."
-      Output: {"job_title": "Full Stack Developer", "experience_status": "experienced", "category": "TECH"}
+      Output: {"job_title": "Full Stack Developer", "experience_status": "experienced", "category": "Developer"}
 
-      Subject: "Application for Data Scientist"
-      Body: "I am interested in the Data Scientist role."
-      Output: {"job_title": "Data Scientist", "experience_status": "unclear", "category": "TECH"}
-
-      Subject: "Job application"
-      Body: "I am writing to express my interest in a position at your company. My experience is in software development and I have worked as a Frontend Developer."
-      Output: {"job_title": "Frontend Developer", "experience_status": "experienced", "category": "TECH"}
+      Subject: "Application for Web Designer"
+      Body: "I am interested in the Web Designer role."
+      Output: {"job_title": "Web Designer", "experience_status": "unclear", "category": "Web Designer"}
 
       Subject: "Job application"
-      Body: "I am writing to express my interest in a position at your company. I have experience in several areas of technology."
-      Output: {"job_title": "unclear", "experience_status": "unclear", "category": "TECH"}
+      Body: "I am writing to express my interest in a position at your company. My experience is in recruitment."
+      Output: {"job_title": "Recruiter", "experience_status": "unclear", "category": "Recruiter"}
 
-      Subject: "Question about your company"
-      Body: "I am interested in learning more about your services."
-      Output: {"job_title": "unclear", "experience_status": "unclear", "category": "unclear"}
+      Subject: "Job application"
+      Body: "I am writing to express my interest in a position at your company. My experience is in sales and marketing."
+      Output: {"job_title": "Sales / Marketing", "experience_status": "unclear", "category": "Sales / Marketing"}
 
       Subject: ${subject}
       Body: ${decodedBody}
@@ -453,7 +483,7 @@ const sendMultipleRejectionReasonsMail = createStep({
         inReplyTo: mail.messageId,
         references: [mail.messageId],
         templateId: "templates-rejection-missing_multiple_details",
-        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
+        addLabelIds: ["Pre-Stage"],
       });
     }
 
@@ -488,7 +518,7 @@ const sendResumeMissingMail = createStep({
         inReplyTo: mail.messageId,
         references: [mail.messageId],
         templateId: "templates-rejection-no_resume",
-        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
+        addLabelIds: ["Pre-Stage"],
       });
     }
 
@@ -524,7 +554,7 @@ const sendCoverLetterMissingEmail = createStep({
         inReplyTo: mail.messageId,
         references: [mail.messageId],
         templateId: "templates-rejection-no_cover_letter",
-        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
+        addLabelIds: ["Pre-Stage"],
       });
     }
 
@@ -560,7 +590,7 @@ const sendUnclearPositionEmail = createStep({
         inReplyTo: mail.messageId,
         references: [mail.messageId],
         templateId: "templates-rejection-no_clear_job_position",
-        addLabelIds: ["INCOMPLETE_APPLICATIONS"],
+        addLabelIds: ["Pre-Stage"],
       });
     }
 
@@ -586,24 +616,23 @@ const sendConfirmationEmail = createStep({
         continue;
       }
 
-      const applicationCategory = mail.position
-        ? `${mail.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
-        : "";
+
+      const applicationCategory = mail.category !== "unclear" && mail.category ? mail.category : "Unclear Applications";
 
       switch (mail.category) {
-        case "TECH":
+        case "Developer":
           const templateId =
             mail.experienceStatus === "experienced"
-              ? "templates-request_key_details-tech-experienced"
+              ? "templates-request_key_details-developer-experienced"
               : mail.experienceStatus === "fresher"
-                ? "templates-request_key_details-tech-fresher"
+                ? "templates-request_key_details-developer-fresher"
                 : null;
 
           if (!templateId || !mail.position || mail.position === "unclear") {
             await modifyEmailLabels({
               emailId: mail.id,
-              addLabelIds: ["UNCLEAR_APPLICANTS"],
-              removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+              addLabelIds: ["Unclear Applications"],
+              removeLabelIds: ["Pre-Stage"],
             });
             continue;
           }
@@ -618,13 +647,13 @@ const sendConfirmationEmail = createStep({
             inReplyTo: mail.messageId,
             references: [mail.messageId],
             templateId: templateId,
-            addLabelIds: [applicationCategory, "APPLICANTS"],
-            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
           });
 
           break;
 
-        case "NON-TECH":
+        case "Recruiter":
           await sendThreadReplyEmail({
             name: mail.name || "",
             position: mail.position || "unclear",
@@ -635,8 +664,24 @@ const sendConfirmationEmail = createStep({
             inReplyTo: mail.messageId,
             references: [mail.messageId],
             templateId: "templates-request_key_details-non-tech",
-            addLabelIds: [applicationCategory, "APPLICANTS"],
-            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
+          });
+          break;
+
+          case "Sales / Marketing":
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.position || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: "templates-request_key_details-non-tech",
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
           });
           break;
 
@@ -651,16 +696,16 @@ const sendConfirmationEmail = createStep({
             inReplyTo: mail.messageId,
             references: [mail.messageId],
             templateId: "templates-request_key_details-creative",
-            addLabelIds: [applicationCategory, "APPLICANTS"],
-            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
           });
           break;
 
         default:
           await modifyEmailLabels({
             emailId: mail.id,
-            addLabelIds: ["UNCLEAR_APPLICANTS"],
-            removeLabelIds: ["INCOMPLETE_APPLICATIONS"],
+            addLabelIds: ["Unclear Applications"],
+            removeLabelIds: ["Pre-Stage"],
           });
           break;
       }
@@ -670,7 +715,7 @@ const sendConfirmationEmail = createStep({
   },
 });
 
-const recruitWorkflowV3 = createWorkflow({
+const recruitmentPreStageWorkflow = createWorkflow({
   id: "recruitment-pre-stage-workflow",
   description:
     "Workflow to handle recruitment tasks with an agent triggered by Gmail events",
@@ -684,6 +729,7 @@ const recruitWorkflowV3 = createWorkflow({
     sendResumeMissingMail,
     sendCoverLetterMissingEmail,
     sendUnclearPositionEmail,
+    sendMultipleRejectionReasonsMail,
     sendConfirmationEmail,
   ],
   retryConfig: {
@@ -694,34 +740,34 @@ const recruitWorkflowV3 = createWorkflow({
   .then(AgentTrigger)
   .foreach(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
-  // .then(sortEmailData)
-  // .branch([
-  //   [
-  //     async ({ inputData: { missingResumeEmails } }) =>
-  //       missingResumeEmails.length > 0,
-  //     sendResumeMissingMail,
-  //   ],
-  //   [
-  //     async ({ inputData: { missingCoverLetterEmails } }) =>
-  //       missingCoverLetterEmails.length > 0,
-  //     sendCoverLetterMissingEmail,
-  //   ],
-  //   [
-  //     async ({ inputData: { unclearPositionEmails } }) =>
-  //       unclearPositionEmails.length > 0,
-  //     sendUnclearPositionEmail,
-  //   ],
-  //   [
-  //     async ({ inputData: { multipleMissingDetailsEmails } }) =>
-  //       multipleMissingDetailsEmails.length > 0,
-  //     sendMultipleRejectionReasonsMail,
-  //   ],
-  //   [
-  //     async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
-  //     sendConfirmationEmail,
-  //   ],
-  // ]);
+.then(sortEmailData)
+.branch([
+  [
+    async ({ inputData: { missingResumeEmails } }) =>
+      missingResumeEmails.length > 0,
+    sendResumeMissingMail,
+  ],
+  [
+    async ({ inputData: { missingCoverLetterEmails } }) =>
+      missingCoverLetterEmails.length > 0,
+    sendCoverLetterMissingEmail,
+  ],
+  [
+    async ({ inputData: { unclearPositionEmails } }) =>
+      unclearPositionEmails.length > 0,
+    sendUnclearPositionEmail,
+  ],
+  [
+    async ({ inputData: { multipleMissingDetailsEmails } }) =>
+      multipleMissingDetailsEmails.length > 0,
+    sendMultipleRejectionReasonsMail,
+  ],
+  [
+    async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
+    sendConfirmationEmail,
+  ],
+]);
 
-recruitWorkflowV3.commit();
+recruitmentPreStageWorkflow.commit();
 
-export { recruitWorkflowV3 };
+export { recruitmentPreStageWorkflow };

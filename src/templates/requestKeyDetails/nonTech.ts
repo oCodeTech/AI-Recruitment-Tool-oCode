@@ -3,7 +3,7 @@ Dear [Candidate Name],
 
 Warm greetings from [Company Name]!
 
-Thank you for considering [Company Name] as your potential employer. We appreciate your job application and would like to request the missing information to proceed with the evaluation of your candidature:
+Thank you for considering [Company Name] as your potential employer. We appreciate your job application and would like to request the following information along with an updated resume in Word document format to proceed with the evaluation of your candidature:
 
 Position applied for: [Job Title]
 

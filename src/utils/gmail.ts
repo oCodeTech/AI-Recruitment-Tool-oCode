@@ -1,5 +1,14 @@
 import { gmail_v1 } from "googleapis";
 import { getGmailClient } from "../OAuth/getGmailClient";
+import { missingMultipleDetailsTemplate } from "../templates/rejection/missingMultipleDetails";
+import { noResumeTemplate } from "../templates/rejection/noResume";
+import { noCoverLetterTemplate } from "../templates/rejection/noCoverLetter";
+import { noClearJobPositionTemplate } from "../templates/rejection/noClearJobPosition";
+import { experiencedTechTemplate } from "../templates/requestKeyDetails/tech/experiencedTech";
+import { fresherTechTemplate } from "../templates/requestKeyDetails/tech/fresherTech";
+import { nonTechTemplate } from "../templates/requestKeyDetails/nonTech";
+import { creativeTemplate } from "../templates/requestKeyDetails/creative";
+import { resendKeyDetailsTemplate } from "../templates/requestKeyDetails/resendKeyDetails";
 
 interface EmailData {
   to: string | null;
@@ -10,9 +19,9 @@ interface EmailData {
   threadId: string;
 }
 
-const gmailClient = await getGmailClient('vivek@ocode.co'); //use actual user email address like hi@ocode.co in real world
+const gmailClient = await getGmailClient("hi@ocode.co"); //use actual user email address like hi@ocode.co in real world
 
- const resolveLabelIds = async (labels: string[]) => {
+const resolveLabelIds = async (labels: string[]) => {
   const existingLabels = await gmailClient.users.labels.list({
     userId: "me",
   });
@@ -319,20 +328,42 @@ export const sendThreadReplyEmail = async ({
   removeLabelIds,
 }: ConfirmationEmailProps): Promise<gmail_v1.Schema$Message> => {
   try {
-    const templateMail = await getDraftTemplate({
-      userId: "me",
-      q: `is:draft label:${templateId}`,
-    });
+    let templateMailBody = "";
 
-    if (!templateMail) {
-      console.log("No template found");
-      return { id: "", threadId: "", labelIds: [] } as gmail_v1.Schema$Message;
+    switch (templateId) {
+      case "templates-rejection-missing_multiple_details":
+        templateMailBody = missingMultipleDetailsTemplate;
+        break;
+      case "templates-rejection-no_resume":
+        templateMailBody = noResumeTemplate;
+        break;
+      case "templates-rejection-no_cover_letter":
+        templateMailBody = noCoverLetterTemplate;
+        break;
+      case "templates-rejection-no_clear_job_position":
+        templateMailBody = noClearJobPositionTemplate;
+        break;
+      case "templates-request_key_details-developer-experienced":
+        templateMailBody = experiencedTechTemplate;
+        break;
+      case "templates-request_key_details-developer-fresher":
+        templateMailBody = fresherTechTemplate;
+        break;
+      case "templates-request_key_details-non-tech":
+        templateMailBody = nonTechTemplate;
+        break;
+      case "templates-request_key_details-creative":
+        templateMailBody = creativeTemplate;
+        break;
+        case "templates-request_key_details-resend_key_details":
+        templateMailBody = resendKeyDetailsTemplate;
+        break;
+      default:
+        console.error(`Template not found in switch case: ${templateId}`);
+        break;
     }
 
-    const plainTextPart = templateMail.payload?.parts?.find(
-      (p) => p.mimeType === "text/plain"
-    );
-    const templateMailBody = decodeEmailBody(plainTextPart);
+    if (!templateMailBody) throw new Error(`${templateId} template not found`);
 
     const replyMail = templateMailBody
       .replaceAll("[Candidate Name]", name ? name : "Candidate")
@@ -341,6 +372,24 @@ export const sendThreadReplyEmail = async ({
         position && position !== "unclear" ? position : "applied"
       )
       .replaceAll("[Company Name]", "oCode Technologies");
+
+    console.log("replyMail", replyMail);
+
+    console.log("send mail params", {
+      to: userEmail,
+      subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,
+      body: replyMail,
+      inReplyTo: inReplyTo,
+      references: references,
+      threadId: threadId,
+    })
+
+    console.log("modifyEmailLabels params", {
+      emailId: emailId,
+      threadId: threadId,
+      addLabelIds: addLabelIds || [],
+      removeLabelIds: removeLabelIds || [],
+    })
 
     const sendMailResp = await sendEmail({
       to: userEmail,

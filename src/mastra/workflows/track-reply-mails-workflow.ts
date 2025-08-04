@@ -10,7 +10,10 @@ import {
   sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
-import { extractJsonFromResult } from "./recruitment-pre-stage-workflow";
+import {
+  extractEmailAndName,
+  extractJsonFromResult,
+} from "./recruitment-pre-stage-workflow";
 import { decodeEmailBody } from "../../utils/gmail";
 
 interface ApplicantKeyDetails {
@@ -38,9 +41,14 @@ interface ApplicantKeyDetails {
 }
 
 const recruitmentMail = process.env.RECRUITMENT_MAIL;
+const consultingMail = process.env.CONSULTING_MAIL;
 
 if (!recruitmentMail) {
   throw new Error("RECRUITMENT_MAIL environment variable is not set");
+}
+
+if (!consultingMail) {
+  throw new Error("CONSULTING_MAIL environment variable is not set");
 }
 
 const AgentTrigger = createStep({
@@ -64,8 +72,9 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:Stage1 Interview OR label:pre-stage`,
-      maxResults: 100,
+      q: `label:Stage1 Interview OR label:Pre-Stage`,
+      labelIds: ["Stage1 Interview", "Pre-Stage", "Developer", "Recruiter"],
+      maxResults: 20,
     };
     try {
       const searchResult = await gmailSearchEmails(searchInboxInput);
@@ -194,9 +203,19 @@ const extractEmailMetaData = createStep({
         (h) => h.name && h.name.toLowerCase() === "from"
       )?.value;
 
-      const userEmail = userAddress?.split("<")[1]?.replace(">", "");
+      const replyToAddress = latestThreadEmail.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "reply-to"
+      )?.value;
 
-      const username = userAddress?.split("<")[0].trim();
+      const { email: userEmail, name: username } =
+        userAddress?.includes(consultingMail) && replyToAddress
+          ? extractEmailAndName(replyToAddress)
+          : extractEmailAndName(userAddress);
+
+      if (!userEmail?.includes("@gmail.com")) {
+        console.log("Email is not from Gmail, skipping", userEmail);
+        return null;
+      }
 
       const subject = latestThreadEmail.payload?.headers?.find(
         (h) => h.name && h.name.toLowerCase() === "subject"
@@ -516,7 +535,7 @@ const analyseIncompleteApplications = createStep({
           ],
         }) &&
         mail.body.length >= 300 &&
-        mail.body.trim().split(/\s+/).length >= 60;
+        mail.body.trim().split(/\s+/).length >= 50;
       const hasResume =
         attachmentId?.length && attachment_filename?.length
           ? containsKeyword({
@@ -1008,42 +1027,42 @@ const trackReplyMailsWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  .then(deduplicateNewlyArrivedMails)
+  // .then(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
-  .then(sortReplyEmails)
-  .branch([
-    [
-      async ({ inputData: { applicants } }) => applicants.length > 0,
-      analyseApplicants,
-    ],
-    [
-      async ({ inputData: { incompleteApplications } }) =>
-        incompleteApplications.length > 0,
-      analyseIncompleteApplications,
-    ],
-  ])
-  .then(mergeResults)
-  .branch([
-    [
-      async ({ inputData: { applicantsWithKeys } }) =>
-        applicantsWithKeys.length > 0,
-      migrateApplicantsWithKeyDetails,
-    ],
-    [
-      async ({ inputData: { rejectedWithoutKeys } }) =>
-        rejectedWithoutKeys.length > 0,
-      informToResend,
-    ],
-    [
-      async ({ inputData: { incompleteApplicationsData } }) =>
-        incompleteApplicationsData.length > 0,
-      informToReApply,
-    ],
-    [
-      async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
-      migrateConfirmedApplicants,
-    ],
-  ]);
+  .then(sortReplyEmails);
+// .branch([
+//   [
+//     async ({ inputData: { applicants } }) => applicants.length > 0,
+//     analyseApplicants,
+//   ],
+//   [
+//     async ({ inputData: { incompleteApplications } }) =>
+//       incompleteApplications.length > 0,
+//     analyseIncompleteApplications,
+//   ],
+// ])
+// .then(mergeResults)
+// .branch([
+//   [
+//     async ({ inputData: { applicantsWithKeys } }) =>
+//       applicantsWithKeys.length > 0,
+//     migrateApplicantsWithKeyDetails,
+//   ],
+//   [
+//     async ({ inputData: { rejectedWithoutKeys } }) =>
+//       rejectedWithoutKeys.length > 0,
+//     informToResend,
+//   ],
+//   [
+//     async ({ inputData: { incompleteApplicationsData } }) =>
+//       incompleteApplicationsData.length > 0,
+//     informToReApply,
+//   ],
+//   [
+//     async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
+//     migrateConfirmedApplicants,
+//   ],
+// ]);
 
 trackReplyMailsWorkflow.commit();
 

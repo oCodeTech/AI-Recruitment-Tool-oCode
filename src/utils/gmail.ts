@@ -20,7 +20,7 @@ interface EmailData {
   bccEmail?: string;
 }
 
-const gmailClient = await getGmailClient("hi@ocode.co"); //use actual user email address like hi@ocode.co in real world
+const gmailClient = await getGmailClient("hi@ocode.co");
 
 const resolveLabelIds = async (labels: string[]) => {
   const existingLabels = await gmailClient.users.labels.list({
@@ -119,12 +119,13 @@ export const gmailSearchEmails = async (searchProps: {
   try {
     const labelIds = await resolveLabelIds(searchProps.labelIds || []);
 
+    const { labelIds: _, ...rest } = searchProps;
+
     const res = await gmailClient.users.messages.list({
       userId: "me",
-      labelIds: labelIds || ["INBOX"],
-      ...searchProps,
+      labelIds: labelIds.length > 0 ? labelIds : undefined,
+      ...rest,
     });
-
     return res.data.messages || [];
   } catch (error) {
     throw error;
@@ -148,13 +149,41 @@ export const getEmailContent = async (emailId: string) => {
 export const containsKeyword = ({
   text,
   keywords,
+  minWordWindow = 0, // how many words must surround the matched phrase
 }: {
   text: string;
   keywords: string[];
+  minWordWindow?: number;
 }) => {
   if (!text) return false;
-  const lowerText = text.toLowerCase();
-  return keywords.some((keyword) => lowerText.includes(keyword.toLowerCase()));
+
+  const lower = text.toLowerCase();
+
+  return keywords.some((kw) => {
+    // Regex pattern (starts/ends with /)
+    if (kw.startsWith('/') && kw.endsWith('/')) {
+      try {
+        return new RegExp(kw.slice(1, -1), 'i').test(text);
+      } catch {
+        return false;
+      }
+    }
+
+    // Simple substring (with optional stemming)
+    const base = kw.toLowerCase();
+    if (lower.includes(base)) {
+      if (minWordWindow === 0) return true;
+
+      // Ensure the phrase sits inside a long-enough sentence
+      const idx = lower.indexOf(base);
+      const start = Math.max(0, idx - 120);
+      const end = Math.min(lower.length, idx + base.length + 120);
+      const windowWords = lower.slice(start, end).split(/\s+/).length;
+      return windowWords >= minWordWindow;
+    }
+
+    return false;
+  });
 };
 
 export const getDraftTemplate = async (searchProps: {
@@ -192,7 +221,13 @@ export const sendEmail = async ({
     throw new Error("Invalid threadId");
   }
 
-  let headers = `To: ${to}\r\nSubject: ${subject}`;
+  const recruitmentEmail = process.env.RECRUITMENT_EMAIL;
+
+  if (!recruitmentEmail) {
+    throw new Error("RECRUITMENT_EMAIL environment variable is not set");
+  }
+
+  let headers = `From: oCode Recruiter <${recruitmentEmail}>\r\nTo: ${to}\r\nSubject: ${subject}`;
 
   if (inReplyTo) {
     headers += `\r\nIn-Reply-To: ${inReplyTo}`;
@@ -213,13 +248,22 @@ export const sendEmail = async ({
     .replace(/=+$/, "");
 
   try {
+    /*************  ✨ Windsurf Command 🌟  *************/
     const response = await gmailClient.users.messages.send({
       userId: "me",
       requestBody: {
         raw: rawMessage,
         threadId: threadId,
+        payload: {
+          headers: [
+            { name: "From", value: `Your Name <your.email@example.com>` },
+            { name: "To", value: to },
+            { name: "Subject", value: subject },
+          ],
+        },
       },
     });
+    /*******  a667827e-65f9-4086-87e1-81726270fc51  *******/
 
     return response.data;
   } catch (error) {

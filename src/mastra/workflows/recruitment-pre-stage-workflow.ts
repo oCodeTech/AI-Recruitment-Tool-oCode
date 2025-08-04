@@ -27,7 +27,7 @@ export const extractEmailAndName = (
 ): { email: string | null; name: string | null } => {
   if (!emailString) return { email: null, name: null };
   const emailMatch = emailString.match(/<(.+?)>/);
-  const name = emailString.split("<")[0].trim() || emailString.split("@")[0];
+  const name = emailString.split("<")[0].trim()?.split("@")[0];
   const email = emailMatch ? emailMatch[1] : emailString.trim();
   return { email, name };
 };
@@ -154,18 +154,18 @@ const extractEmailMetaData = createStep({
   id: "extract-email-meta-data",
   description: "Extracts email metadata by email ID and thread ID",
   // for development
-  inputSchema: z.object({
-    id: z.string().nullable().optional(),
-    threadId: z.string().nullable().optional(),
-  }),
+  // inputSchema: z.object({
+  //   id: z.string().nullable().optional(),
+  //   threadId: z.string().nullable().optional(),
+  // }),
   // for production
-  // inputSchema: z
-  //   .object({
-  //     id: z.string(),
-  //     threadId: z.string(),
-  //   })
-  //   .nullable()
-  //   .describe("Email ID and thread ID to extract metadata"),
+  inputSchema: z
+    .object({
+      id: z.string(),
+      threadId: z.string(),
+    })
+    .nullable()
+    .describe("Email ID and thread ID to extract metadata"),
   outputSchema: ExtractEmailMetaDataOutput,
   execute: async ({ inputData, mastra }) => {
     if (!inputData || Object.values(inputData).some((v) => !v || !v.trim())) {
@@ -210,6 +210,20 @@ const extractEmailMetaData = createStep({
         (h) => h.name && h.name.toLowerCase() === "reply-to"
       )?.value;
 
+      const plainTextPart =
+        email.payload?.parts
+          ?.find((p) => p.mimeType === "multipart/alternative")
+          ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
+        email.payload?.parts?.find((p) => p.mimeType === "text/plain");
+
+      const decodedBody = decodeEmailBody(plainTextPart);
+
+      const username = decodedBody
+        .split("Name:")
+        .splice(1)
+        .join(" ")
+        .split("\r\n")[0];
+
       const { email: userEmail, name } =
         userAddress?.includes(consultingMail) && replyToAddress
           ? extractEmailAndName(replyToAddress)
@@ -224,13 +238,55 @@ const extractEmailMetaData = createStep({
         (h) => h.name && h.name.toLowerCase() === "subject"
       )?.value;
 
-      const plainTextPart =
-        email.payload?.parts
-          ?.find((p) => p.mimeType === "multipart/alternative")
-          ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
-        email.payload?.parts?.find((p) => p.mimeType === "text/plain");
+      const relevantSubjectKeywords = [
+        "application received",
+        "new application received",
+        "application for",
+        "job application",
+        "job candidate",
+        "applied for",
+        "resume",
+        "cv",
+        "profile",
+        "hiring",
+        "interview",
+        "interested in",
+        "candidate for",
+        "looking for job",
+        "seeking opportunity",
+      ];
 
-      const decodedBody = decodeEmailBody(plainTextPart);
+      const irrelevantSubjectKeywords = [
+        "unsubscribe",
+        "newsletter",
+        "promotion",
+        "discount",
+        "offer",
+        "sale",
+        "buy now",
+        "thank you for subscribing",
+        "webinar",
+        "event invite",
+        "no-reply",
+        "notification",
+        "account",
+        "password",
+        "invoice",
+        "receipt",
+      ];
+
+      const relevantSubject =
+        relevantSubjectKeywords.some((keyword) =>
+          subject?.toLowerCase().includes(keyword)
+        ) &&
+        !irrelevantSubjectKeywords.some((keyword) =>
+          subject?.toLowerCase().includes(keyword)
+        );
+
+      if (!relevantSubject) {
+        console.log("Subject not related to recruitment, skipping", subject);
+        return null;
+      }
 
       const attachment_filename = email.payload?.parts
         ?.filter((p) => p.filename)
@@ -244,7 +300,7 @@ const extractEmailMetaData = createStep({
         messageId: messageId || "",
         threadId: threadId || email.threadId || "",
         userEmail: userEmail ?? null,
-        name: name ?? null,
+        name: username && username !== "" ? username : (name ?? null),
         subject: subject ?? null,
         body: decodedBody ?? null,
         attachment_filename: attachment_filename || [],
@@ -255,33 +311,88 @@ const extractEmailMetaData = createStep({
         containsKeyword({
           text: decodedBody,
           keywords: [
+            // classic openers / closers
             "cover letter",
-            "job application",
-            "work experience",
-            "skills",
-            "education",
-            "summary",
-            "objective",
-            "responsibilities",
-            "keen interest",
-            "strong background",
-            "software development",
-            "contribute positively",
-            "scalable web applications",
-            "optimizing database performance",
-            "highly motivated",
-            "detail-oriented",
-            "achieving excellence",
-            "qualifications",
             "dear hiring manager",
+            "dear sir or madam",
+            "dear team",
+            "dear recruiter",
+            "dear [company]",
+            "i am writing to",
             "i am excited to apply",
+            "i am reaching out",
+            "i am interested in",
             "thank you for considering",
-            "my current role",
-            "your team",
+            "thank you for your time",
+            "sincerely yours",
+            "best regards",
+
+            // self-introduction / intent
+            "with x years of experience",
+            "with hands-on experience in",
+            "i bring to the table",
+            "i offer",
+            "i am eager to",
+            "i am passionate about",
+            "i am confident that",
+            "i would love the opportunity",
+            "i am looking forward to",
+            "contribute to your team",
+            "add value to your organization",
+            "aligns with my career goals",
+
+            // skill highlights
+            "proficient in",
+            "expertise in",
+            "skilled at",
+            "experience working with",
+            "experience includes",
+            "hands-on knowledge of",
+            "demonstrated ability in",
+            "proven track record",
+            "strong background in",
+            "solid understanding of",
+
+            // achievements & impact
+            "improved",
+            "increased",
+            "reduced",
+            "achieved",
+            "delivered",
+            "optimized",
+            "enhanced",
+            "streamlined",
+            "boosted",
+            "spearheaded",
+            "led the development",
+            "successfully launched",
+            "production-ready apps",
+            "real-world projects",
+
+            // soft skills
+            "team-oriented",
+            "detail-oriented",
+            "self-motivated",
+            "fast learner",
+            "adaptable",
+            "collaborative",
+            "multitask",
+            "problem-solving",
+            "critical thinking",
+            "communication skills",
+
+            // company-centric phrases
+            "your company’s mission",
+            "your innovative projects",
+            "your dynamic environment",
+            "your development team",
+            "your engineering culture",
+            "your product roadmap",
+            "your commitment to excellence",
           ],
         }) &&
         decodedBody.length >= 300 &&
-        decodedBody.trim().split(/\s+/).length >= 60;
+        decodedBody.trim().split(/\s+/).length >= 50;
 
       const hasResume =
         attachmentId?.length && attachment_filename?.length
@@ -312,42 +423,56 @@ const extractEmailMetaData = createStep({
               keywords: ["resume", "Resume", "cv", "CV"],
             });
 
+      const potentialJobTitle = decodedBody
+        .split("Job Opening:")
+        .splice(1)
+        .join(" ")
+        .split("[")[0];
+
       try {
         const agent = mastra.getAgent("contextQAAgent");
         const result = await agent.generate(
-          "Determine the most likely job title, experience status, and category for the application based on the email subject and body. Return a JSON object with these details or 'unclear'.",
+          "Extract job application details from emails with varying structures",
           {
             instructions: `
-      Analyze the subject and body of a job application email to identify the job title, experience status, and category:
-      - Identify explicit mentions or strong contextual clues pointing to the job title.
-      - Infer the experience status (fresher or experienced) based on details in the email.
-      - Categorize the application into one of: Developer, Web Designer, Recruiter, Sales / Marketing.
-      - Provide a normalized job title, avoiding guesses without clear evidence.
-      - If ambiguity exists, choose the most strongly suggested job title.
-      - If unclear, return 'unclear' for any of the fields.
-      - Output a JSON object: {"job_title": "<job title or 'unclear'>", "experience_status": "<fresher, experienced, or 'unclear'>", "category": "<Developer, Web Designer, Recruiter, Sales / Marketing, or 'unclear'>"}
-      Examples:
-      Subject: "Full stack developer application"
-      Body: "I am keen to join as a Full Stack Web Developer with my experience in both frontend and backend."
-      Output: {"job_title": "Full Stack Developer", "experience_status": "experienced", "category": "Developer"}
+You are a job-application parser.  
+Input variables:  
+- SUBJECT: ${subject}  
+- BODY: ${decodedBody}  
+- HINT_TITLE: ${potentialJobTitle ? `'${potentialJobTitle}'` : "None"}
 
-      Subject: "Web Designer role"
-      Body: "Applying for the Web Designer position."
-      Output: {"job_title": "Web Designer", "experience_status": "unclear", "category": "Web Designer"}
+Return **only** valid JSON:  
+{ "job_title": "<title>", "experience_status": "<status>", "category": "<category>" }
 
-      Subject: "Job application"
-      Body: "My experience is in recruitment."
-      Output: {"job_title": "Recruiter", "experience_status": "unclear", "category": "Recruiter"}
+1. JOB_TITLE  
+   a. Patterns (stop at first hit):  
+      • ^Application for (.+?)(?:\\s*\\(|\\s*Role|$)  
+      • New application received for the position of (.+?)(?:\\s*\\[|\\s*at|$)  
+      • Job Opening: (.+?)(?:\\s*\\[|\\s*at|$)  
+      • applying for the (.+?) role|position  
+      • interest in any suitable (.+?) opportunities  
+   b. Clean: trim; drop everything from '(' or '[' onward.  
+   c. Fallback: if no match →  
+      • extract last word before "developer", "engineer", "programmer", "designer", etc.  
+      • else use HINT_TITLE if it appears verbatim in body.  
 
-      Subject: "Job application"
-      Body: "My expertise lies in sales and marketing."
-      Output: {"job_title": "Sales / Marketing", "experience_status": "unclear", "category": "Sales / Marketing"}
+2. EXPERIENCE_STATUS  
+   • "experienced" if regex matches:  
+     \\b(?:\\d+(?:\\.\\d+)?)\\s*(?:\\+|years?)\\b  OR  \\bbuilt \\d+ apps?\\b  OR  \\bthroughout my career\\b  
+   • "fresher" if “recent graduate”, “intern”, “entry-level” appear and no numeric years.  
+   • else "unclear".
 
-      Subject: ${subject}
-      Body: ${decodedBody}
-    `,
+3. CATEGORY  
+   • "Developer" if title OR body contains: developer, engineer, programmer, flutter, react, backend, frontend, full-stack, node, laravel, php, mobile, app, software.  
+   • "Web Designer" for designer, ui/ux, web design.  
+   • "Recruiter" for recruiter, hr, talent acquisition.  
+   • "Sales/Marketing" for sales, marketing, business development.  
+   • else "unclear".
+
+Return **only** the JSON object—no explanation.
+`,
             maxSteps: 10,
-            maxTokens: 50,
+            maxTokens: 100,
           }
         );
         const generatedResult: {
@@ -741,9 +866,9 @@ const recruitmentPreStageWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  // .foreach(deduplicateNewlyArrivedMails)
-  .foreach(extractEmailMetaData);
-// .then(sortEmailData)
+  .foreach(deduplicateNewlyArrivedMails)
+  .foreach(extractEmailMetaData)
+  .then(sortEmailData);
 // .branch([
 //   [
 //     async ({ inputData: { missingResumeEmails } }) =>

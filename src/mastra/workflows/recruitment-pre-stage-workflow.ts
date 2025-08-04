@@ -2,6 +2,7 @@ import { createStep, createWorkflow } from "@mastra/core";
 import z from "zod";
 import {
   containsKeyword,
+  decodeEmailBody,
   getEmailContent,
   getThreadMessages,
   gmailSearchEmails,
@@ -9,7 +10,6 @@ import {
   sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
-import { gmail_v1 } from "googleapis";
 
 const recruitmentMail = process.env.RECRUITMENT_MAIL;
 const consultingMail = process.env.CONSULTING_MAIL;
@@ -21,20 +21,16 @@ if (!recruitmentMail) {
 if (!consultingMail) {
   throw new Error("CONSULTING_MAIL environment variable is not set");
 }
-export const decodeEmailBody = (
-  encodedBody: gmail_v1.Schema$MessagePart | undefined
-) => {
-  const bodyEncoded = encodedBody?.body?.data || "";
-  return Buffer.from(bodyEncoded, "base64").toString("utf8");
-};
 
-export const extractEmailAndName = (emailString: string | null | undefined): { email: string | null, name: string | null } => {
-        if (!emailString) return { email: null, name: null };
-        const emailMatch = emailString.match(/<(.+?)>/);
-        const name = emailString.split("<")[0].trim();
-        const email = emailMatch ? emailMatch[1] : emailString.trim();
-        return { email, name };
-      };
+export const extractEmailAndName = (
+  emailString: string | null | undefined
+): { email: string | null; name: string | null } => {
+  if (!emailString) return { email: null, name: null };
+  const emailMatch = emailString.match(/<(.+?)>/);
+  const name = emailString.split("<")[0].trim();
+  const email = emailMatch ? emailMatch[1] : emailString.trim();
+  return { email, name };
+};
 
 export const extractJsonFromResult = (result: string) => {
   const match = result.match(/\{.*\}/s);
@@ -70,7 +66,7 @@ const AgentTrigger = createStep({
     const searchInboxInput = {
       userId: "me",
       q: `label:inbox -label:pre-stage`,
-      maxResults: 20,
+      maxResults: 100,
     };
 
     try {
@@ -208,13 +204,14 @@ const extractEmailMetaData = createStep({
         (h) => h.name && h.name.toLowerCase() === "reply-to"
       )?.value;
 
-      const { email: userEmail, name } = userAddress?.includes(consultingMail) && replyToAddress
-        ? extractEmailAndName(replyToAddress)
-        : extractEmailAndName(userAddress);
+      const { email: userEmail, name } =
+        userAddress?.includes(consultingMail) && replyToAddress
+          ? extractEmailAndName(replyToAddress)
+          : extractEmailAndName(userAddress);
 
-        if(!userEmail?.includes("@gmail.com")){
-          return null
-        }
+      if (!userEmail?.includes("@gmail.com")) {
+        return null;
+      }
 
       const subject = email.payload?.headers?.find(
         (h) => h.name && h.name.toLowerCase() === "subject"
@@ -616,8 +613,10 @@ const sendConfirmationEmail = createStep({
         continue;
       }
 
-
-      const applicationCategory = mail.category !== "unclear" && mail.category ? mail.category : "Unclear Applications";
+      const applicationCategory =
+        mail.category !== "unclear" && mail.category
+          ? mail.category
+          : "Unclear Applications";
 
       switch (mail.category) {
         case "Developer":
@@ -669,7 +668,7 @@ const sendConfirmationEmail = createStep({
           });
           break;
 
-          case "Sales / Marketing":
+        case "Sales / Marketing":
           await sendThreadReplyEmail({
             name: mail.name || "",
             position: mail.position || "unclear",
@@ -740,33 +739,33 @@ const recruitmentPreStageWorkflow = createWorkflow({
   .then(AgentTrigger)
   .foreach(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
-.then(sortEmailData)
-.branch([
-  [
-    async ({ inputData: { missingResumeEmails } }) =>
-      missingResumeEmails.length > 0,
-    sendResumeMissingMail,
-  ],
-  [
-    async ({ inputData: { missingCoverLetterEmails } }) =>
-      missingCoverLetterEmails.length > 0,
-    sendCoverLetterMissingEmail,
-  ],
-  [
-    async ({ inputData: { unclearPositionEmails } }) =>
-      unclearPositionEmails.length > 0,
-    sendUnclearPositionEmail,
-  ],
-  [
-    async ({ inputData: { multipleMissingDetailsEmails } }) =>
-      multipleMissingDetailsEmails.length > 0,
-    sendMultipleRejectionReasonsMail,
-  ],
-  [
-    async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
-    sendConfirmationEmail,
-  ],
-]);
+  .then(sortEmailData)
+  .branch([
+    [
+      async ({ inputData: { missingResumeEmails } }) =>
+        missingResumeEmails.length > 0,
+      sendResumeMissingMail,
+    ],
+    [
+      async ({ inputData: { missingCoverLetterEmails } }) =>
+        missingCoverLetterEmails.length > 0,
+      sendCoverLetterMissingEmail,
+    ],
+    [
+      async ({ inputData: { unclearPositionEmails } }) =>
+        unclearPositionEmails.length > 0,
+      sendUnclearPositionEmail,
+    ],
+    [
+      async ({ inputData: { multipleMissingDetailsEmails } }) =>
+        multipleMissingDetailsEmails.length > 0,
+      sendMultipleRejectionReasonsMail,
+    ],
+    [
+      async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
+      sendConfirmationEmail,
+    ],
+  ]);
 
 recruitmentPreStageWorkflow.commit();
 

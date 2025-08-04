@@ -84,47 +84,45 @@ const executeWorkflow = async (workflowId: string) => {
   }
 };
 
-const getCurrentLabels = async () => {
-  try {
-    const gmailClient = await getGmailClient("hi@ocode.co");
+// const getCurrentLabels = async () => {
+//   try {
+//     const gmailClient = await getGmailClient("hi@ocode.co");
 
-    // for Inbox
-    const searchInboxInput = {
-      userId: "me",
-      q: `label:INBOX`,
-      maxResults: 20,
-    };
-    const searchResult = await gmailSearchEmails(searchInboxInput);
+//     // for Inbox
+//     const searchInboxInputForSearchingEmails = {
+//       userId: "me",
+//       q: `label:INBOX`,
+//       maxResults: 20,
+//     };
+//     const searchResultOfSearchedMails = await gmailSearchEmails(searchInboxInputForSearchingEmails);
 
-    const inboxMails = [];
-    
-    for (let mail of searchResult) {
-      if(!mail.id) continue;
-      const data = await getEmailContent(mail.id);
+//     const inboxMails = [];
 
-      if(!data) continue;
+//     for (let mail of searchResultOfSearchedMails) {
+//       if(!mail.id) continue;
+//       const data = await getEmailContent(mail.id);
 
-      const mailContent = {
-        from : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "from")?.value,
-        subject : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "subject")?.value,
-        snippet : data?.snippet
-      }
+//       if(!data) continue;
 
-      inboxMails.push(mailContent);
-    }
+//       const mailContent = {
+//         from : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "from")?.value,
+//         subject : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "subject")?.value,
+//         snippet : data?.snippet
+//       }
 
-    console.table(inboxMails);
+//       inboxMails.push(mailContent);
+//     }
 
+//     console.table(inboxMails);
 
-    // for Labels
-    // const {data: {labels: res} } = await gmailClient.users.labels.list({
-    //   userId: "me"
-    // });
+// //     for Labels
+//     const {data: {labels: res} } = await gmailClient.users.labels.list({
+//       userId: "me"
+//     });
 
-    // console.table(res);
+//     console.table(res);
 
-
-    // for sent mails
+// //     for sent mails
 // const searchInboxInput = {
 //       userId: "me",
 //       q: `label:SENT`,
@@ -134,7 +132,6 @@ const getCurrentLabels = async () => {
 
 //     console.log(searchResult)
 
-
 //     for (let mail of searchResult) {
 
 //       if(!mail.id) continue;
@@ -142,17 +139,20 @@ const getCurrentLabels = async () => {
 //       console.log(data)
 //     }
 
-  } catch (error) {
-    throw error;
-  }
-};
+//   } catch (error) {
+//     throw error;
+//   }
+// };
 
-getCurrentLabels();
+// getCurrentLabels();
 
 cron.schedule("0 */2 * * *", () => {
   console.log(" Executing recruitment workflows...");
 
-  const workflowIds = ["recruitmentPreStageWorkflow", "trackReplyMailsWorkflow"];
+  const workflowIds = [
+    "recruitmentPreStageWorkflow",
+    "trackReplyMailsWorkflow",
+  ];
 
   Promise.allSettled(
     workflowIds.map((workflowId) => executeWorkflow(workflowId))

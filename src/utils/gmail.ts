@@ -17,6 +17,7 @@ interface EmailData {
   inReplyTo?: string;
   references?: string[];
   threadId: string;
+  bccEmail?: string;
 }
 
 const gmailClient = await getGmailClient("hi@ocode.co"); //use actual user email address like hi@ocode.co in real world
@@ -181,6 +182,7 @@ export const sendEmail = async ({
   inReplyTo,
   references,
   threadId,
+  bccEmail = "career@browsewire.net",
 }: EmailData) => {
   if (!to || !subject || !body || !threadId) {
     throw new Error("Email data is required");
@@ -198,6 +200,10 @@ export const sendEmail = async ({
 
   if (references && references.length > 0) {
     headers += `\r\nReferences: ${references.join(" ")}`;
+  }
+
+  if (bccEmail) {
+    headers += `\r\nBcc: ${bccEmail}`;
   }
 
   const rawMessage = Buffer.from(`${headers}\r\n\r\n${body}`)
@@ -307,7 +313,7 @@ interface ConfirmationEmailProps {
   removeLabelIds?: string[];
 }
 
-const decodeEmailBody = (
+export const decodeEmailBody = (
   encodedBody: gmail_v1.Schema$MessagePart | undefined
 ) => {
   const bodyEncoded = encodedBody?.body?.data || "";
@@ -355,7 +361,7 @@ export const sendThreadReplyEmail = async ({
       case "templates-request_key_details-creative":
         templateMailBody = creativeTemplate;
         break;
-        case "templates-request_key_details-resend_key_details":
+      case "templates-request_key_details-resend_key_details":
         templateMailBody = resendKeyDetailsTemplate;
         break;
       default:
@@ -382,14 +388,14 @@ export const sendThreadReplyEmail = async ({
       inReplyTo: inReplyTo,
       references: references,
       threadId: threadId,
-    })
+    });
 
     console.log("modifyEmailLabels params", {
       emailId: emailId,
       threadId: threadId,
       addLabelIds: addLabelIds || [],
       removeLabelIds: removeLabelIds || [],
-    })
+    });
 
     const sendMailResp = await sendEmail({
       to: userEmail,

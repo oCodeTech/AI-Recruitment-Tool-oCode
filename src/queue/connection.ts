@@ -5,7 +5,6 @@ export const redisConnection: RedisOptions = {
   port: Number(process.env.REDIS_PORT),
   password: process.env.REDIS_PASSWORD,
   username: 'default',
-  tls: {},
 };
 
 export const redis = new Redis(redisConnection);

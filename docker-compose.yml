@@ -20,6 +20,8 @@ services:
       MASTRA_TELEMETRY_DISABLED: "true"
       POSTHOG_DISABLED: "true"
     restart: unless-stopped
+    networks:
+      - mastra-network
 
 volumes:
   redis-data:

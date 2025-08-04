@@ -11,7 +11,7 @@ import {
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
 import { extractJsonFromResult } from "./recruitment-pre-stage-workflow";
-import {decodeEmailBody} from "../../utils/gmail";
+import { decodeEmailBody } from "../../utils/gmail";
 
 interface ApplicantKeyDetails {
   position: string;
@@ -576,7 +576,7 @@ const analyseIncompleteApplications = createStep({
         const grokAgent = mastra.getAgent("gmailGroqAgent");
 
         const result = await grokAgent.generate(
-         "Analyze the email subject, body and application to determine the most likely job title the candidate is applying for, experience status and category. Output only a JSON object with the job title, experience status and category or 'unclear'.",
+          "Analyze the email subject, body and application to determine the most likely job title the candidate is applying for, experience status and category. Output only a JSON object with the job title, experience status and category or 'unclear'.",
           {
             instructions: `
       You are given the subject and body of a job application email. Your task is to determine the most likely job title the candidate is applying for, experience status and category.
@@ -599,7 +599,7 @@ const analyseIncompleteApplications = createStep({
       Body: "I am interested in the Web Designer role."
       Output: {"job_title": "Web Designer", "experience_status": "unclear", "category": "Web Designer"}
 
-      Subject: "Job application"
+      Subject: "Application for Recruiter Position"
       Body: "I am writing to express my interest in a position at your company. My experience is in recruitment."
       Output: {"job_title": "Recruiter", "experience_status": "unclear", "category": "Recruiter"}
 
@@ -614,7 +614,7 @@ const analyseIncompleteApplications = createStep({
             maxTokens: 50,
           }
         );
-         const generatedResult: {
+        const generatedResult: {
           job_title: string;
           experience_status: string;
           category: string;
@@ -630,9 +630,9 @@ const analyseIncompleteApplications = createStep({
             ...emailMetaData,
             hasCoverLetter,
             hasResume,
-            job_title: generatedResult.job_title || "unclear",
-            experience_status: generatedResult.experience_status || "unclear",
-            category: generatedResult.category || "unclear",
+            job_title: generatedResult?.job_title || "unclear",
+            experience_status: generatedResult?.experience_status || "unclear",
+            category: generatedResult?.category || "unclear",
           });
         } else {
           applicantsData.push({
@@ -810,98 +810,101 @@ const migrateConfirmedApplicants = createStep({
     for (let mail of applicantsData) {
       if (!mail.userEmail) continue;
 
-      const applicationCategory = mail.category !== "unclear" && mail.category ? mail.category : "Unclear Applications";
+      const applicationCategory =
+        mail.category !== "unclear" && mail.category
+          ? mail.category
+          : "Unclear Applications";
 
-          switch (mail.category) {
-            case "Developer":
-              const templateId =
-                mail.experience_status === "experienced"
-                  ? "templates-request_key_details-developer-experienced"
-                  : mail.experience_status === "fresher"
-                    ? "templates-request_key_details-developer-fresher"
-                    : null;
-    
-              if (!templateId || !mail.job_title || mail.job_title === "unclear") {
-                await modifyEmailLabels({
-                  emailId: mail.id,
-                  addLabelIds: ["Unclear Applications"],
-                  removeLabelIds: ["Pre-Stage"],
-                });
-                continue;
-              }
-    
-              await sendThreadReplyEmail({
-                name: mail.name || "",
-                position: mail.job_title || "unclear",
-                userEmail: mail.userEmail,
-                subject: mail.subject,
-                threadId: mail.threadId,
-                emailId: mail.id,
-                inReplyTo: mail.messageId,
-                references: [mail.messageId],
-                templateId: templateId,
-                addLabelIds: [applicationCategory, "Stage1 Interview"],
-                removeLabelIds: ["Pre-Stage"],
-              });
-    
-              break;
-    
-            case "Recruiter":
-              await sendThreadReplyEmail({
-                name: mail.name || "",
-                position: mail.job_title || "unclear",
-                userEmail: mail.userEmail,
-                subject: mail.subject,
-                threadId: mail.threadId,
-                emailId: mail.id,
-                inReplyTo: mail.messageId,
-                references: [mail.messageId],
-                templateId: "templates-request_key_details-non-tech",
-                addLabelIds: [applicationCategory,  "Stage1 Interview"],
-                removeLabelIds: ["Pre-Stage"],
-              });
-              break;
-    
-              case "Sales / Marketing":
-              await sendThreadReplyEmail({
-                name: mail.name || "",
-                position: mail.job_title || "unclear",
-                userEmail: mail.userEmail,
-                subject: mail.subject,
-                threadId: mail.threadId,
-                emailId: mail.id,
-                inReplyTo: mail.messageId,
-                references: [mail.messageId],
-                templateId: "templates-request_key_details-non-tech",
-                addLabelIds: [applicationCategory,  "Stage1 Interview"],
-                removeLabelIds: ["Pre-Stage"],
-              });
-              break;
-    
-            case "CREATIVE":
-              await sendThreadReplyEmail({
-                name: mail.name || "",
-                position: mail.job_title || "unclear",
-                userEmail: mail.userEmail,
-                subject: mail.subject,
-                threadId: mail.threadId,
-                emailId: mail.id,
-                inReplyTo: mail.messageId,
-                references: [mail.messageId],
-                templateId: "templates-request_key_details-creative",
-                addLabelIds: [applicationCategory,  "Stage1 Interview"],
-                removeLabelIds: ["Pre-Stage"],
-              });
-              break;
-    
-            default:
-              await modifyEmailLabels({
-                emailId: mail.id,
-                addLabelIds: ["Unclear Applications"],
-                removeLabelIds: ["Pre-Stage"],
-              });
-              break;
-          }  
+      switch (mail.category) {
+        case "Developer":
+          const templateId =
+            mail.experience_status === "experienced"
+              ? "templates-request_key_details-developer-experienced"
+              : mail.experience_status === "fresher"
+                ? "templates-request_key_details-developer-fresher"
+                : null;
+
+          if (!templateId || !mail.job_title || mail.job_title === "unclear") {
+            await modifyEmailLabels({
+              emailId: mail.id,
+              addLabelIds: ["Unclear Applications"],
+              removeLabelIds: ["Pre-Stage"],
+            });
+            continue;
+          }
+
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.job_title || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: templateId,
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
+          });
+
+          break;
+
+        case "Recruiter":
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.job_title || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: "templates-request_key_details-non-tech",
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
+          });
+          break;
+
+        case "Sales / Marketing":
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.job_title || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: "templates-request_key_details-non-tech",
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
+          });
+          break;
+
+        case "CREATIVE":
+          await sendThreadReplyEmail({
+            name: mail.name || "",
+            position: mail.job_title || "unclear",
+            userEmail: mail.userEmail,
+            subject: mail.subject,
+            threadId: mail.threadId,
+            emailId: mail.id,
+            inReplyTo: mail.messageId,
+            references: [mail.messageId],
+            templateId: "templates-request_key_details-creative",
+            addLabelIds: [applicationCategory, "Stage1 Interview"],
+            removeLabelIds: ["Pre-Stage"],
+          });
+          break;
+
+        default:
+          await modifyEmailLabels({
+            emailId: mail.id,
+            addLabelIds: ["Unclear Applications"],
+            removeLabelIds: ["Pre-Stage"],
+          });
+          break;
+      }
     }
 
     return "applicants confirmed and migrated";

@@ -14,7 +14,11 @@ import cron from "node-cron";
 import jobOpeningsRoutes from "./routes/jobOpeningsRoutes";
 import { ragAgent } from "./agents/rag-agent";
 import { getGmailClient } from "../OAuth/getGmailClient";
-import { getEmailContent, gmailSearchEmails } from "../utils/gmail";
+import {
+  getEmailContent,
+  getLabelNames,
+  gmailSearchEmails,
+} from "../utils/gmail";
 
 const app = express();
 const port = process.env.NODE_PORT || 5000;
@@ -89,55 +93,115 @@ const executeWorkflow = async (workflowId: string) => {
 //     const gmailClient = await getGmailClient("hi@ocode.co");
 
 //     // for Inbox
-//     const searchInboxInputForSearchingEmails = {
-//       userId: "me",
-//       q: `label:INBOX`,
-//       maxResults: 20,
-//     };
-//     const searchResultOfSearchedMails = await gmailSearchEmails(searchInboxInputForSearchingEmails);
+//     // const searchInboxInputForSearchingEmails = {
+//     //   userId: "me",
+//     //   q: `label:INBOX`,
+//     //   maxResults: 20,
+//     // };
+//     // const searchResultOfSearchedMails = await gmailSearchEmails(searchInboxInputForSearchingEmails);
 
-//     const inboxMails = [];
+//     // const inboxMails = [];
 
-//     for (let mail of searchResultOfSearchedMails) {
-//       if(!mail.id) continue;
-//       const data = await getEmailContent(mail.id);
+//     // for (let mail of searchResultOfSearchedMails) {
+//     //   if(!mail.id) continue;
+//     //   const data = await getEmailContent(mail.id);
 
-//       if(!data) continue;
+//     //   if(!data) continue;
 
-//       const mailContent = {
-//         from : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "from")?.value,
-//         subject : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "subject")?.value,
-//         snippet : data?.snippet
-//       }
+//     //   const mailContent = {
+//     //     from : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "from")?.value,
+//     //     subject : data?.payload?.headers?.find((h) => h.name && h.name.toLowerCase() === "subject")?.value,
+//     //     snippet : data?.snippet
+//     //   }
 
-//       inboxMails.push(mailContent);
-//     }
+//     //   inboxMails.push(mailContent);
+//     // }
 
-//     console.table(inboxMails);
+//     // console.table(inboxMails);
 
-// //     for Labels
-//     const {data: {labels: res} } = await gmailClient.users.labels.list({
-//       userId: "me"
-//     });
+//     //     for Labels
+//     // const {
+//     //   data: { labels: res },
+//     // } = await gmailClient.users.labels.list({
+//     //   userId: "me",
+//     // });
 
-//     console.table(res);
+//     // console.table(res);
 
-// //     for sent mails
-// const searchInboxInput = {
+//     //     for sent mails
+//     const searchInboxInput = {
 //       userId: "me",
 //       q: `label:SENT`,
 //       maxResults: 20,
 //     };
-//  const searchResult = await gmailSearchEmails(searchInboxInput);
-
-//     console.log(searchResult)
-
+//     const searchResult = await gmailSearchEmails(searchInboxInput);
+//     console.log("mails sent count", searchResult.length);
 //     for (let mail of searchResult) {
+//       if (!mail.id) continue;
+//       const data = await getEmailContent(mail.id);
 
-//       if(!mail.id) continue;
-//       const data = await getEmailContent(mail.id)
-//       console.log(data)
+//       const parsedData = {
+//         labels: await getLabelNames(data?.labelIds || []),
+//         snippet: data?.snippet,
+//         bcc: data.payload?.headers?.find(
+//           (h) => h.name && h.name.toLowerCase() === "bcc"
+//         )?.value,
+//         subject: data?.payload?.headers?.find(
+//           (h) => h.name && h.name.toLowerCase() === "subject"
+//         )?.value,
+//       };
+
+//       console.table(parsedData);
 //     }
+
+//     // for label specific mails
+
+//     // const searchInboxInputForSearchingEmails = {
+//     //   userId: "me",
+//     //   q: `label:Label_12 label:Label_13`,
+//     //   maxResults: 20,
+//     // };
+//     // const searchResultOfSearchedMails = await gmailSearchEmails(
+//     //   searchInboxInputForSearchingEmails
+//     // );
+
+//     // const inboxMails = [];
+
+//     // for (let mail of searchResultOfSearchedMails) {
+//     //   if (!mail.id) continue;
+//     //   const data = await getEmailContent(mail.id);
+
+//     //   if (!data) continue;
+
+//     //   const mailContent = {
+//     //     from: data?.payload?.headers?.find(
+//     //       (h) => h.name && h.name.toLowerCase() === "from"
+//     //     )?.value,
+//     //     subject: data?.payload?.headers?.find(
+//     //       (h) => h.name && h.name.toLowerCase() === "subject"
+//     //     )?.value,
+//     //     snippet: data?.snippet,
+//     //   };
+
+//     //   inboxMails.push(mailContent);
+//     // }
+
+//     // console.table(inboxMails);
+
+//     // console.log("label names", await getLabelNames(["Label_16", "Label_17"]));
+
+//     // to delete labels
+//     // for (let labelId of ["Label_14", "Label_15", "Label_17"]) {
+//     //   try {
+//     //     const deleteResp = await gmailClient.users.labels.delete({
+//     //       userId: "me",
+//     //       id: labelId,
+//     //     });
+//     //     console.log("label deleted", deleteResp);
+//     //   } catch (err) {
+//     //     console.log("Error deleting label", labelId, err);
+//     //   }
+//     // }
 
 //   } catch (error) {
 //     throw error;
@@ -146,7 +210,7 @@ const executeWorkflow = async (workflowId: string) => {
 
 // getCurrentLabels();
 
-cron.schedule("0 */2 * * *", () => {
+cron.schedule("0 */1 * * *", () => {
   console.log(" Executing recruitment workflows...");
 
   const workflowIds = [

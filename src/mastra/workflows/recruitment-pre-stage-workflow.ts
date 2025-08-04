@@ -27,7 +27,7 @@ export const extractEmailAndName = (
 ): { email: string | null; name: string | null } => {
   if (!emailString) return { email: null, name: null };
   const emailMatch = emailString.match(/<(.+?)>/);
-  const name = emailString.split("<")[0].trim();
+  const name = emailString.split("<")[0].trim() || emailString.split("@")[0];
   const email = emailMatch ? emailMatch[1] : emailString.trim();
   return { email, name };
 };
@@ -154,18 +154,18 @@ const extractEmailMetaData = createStep({
   id: "extract-email-meta-data",
   description: "Extracts email metadata by email ID and thread ID",
   // for development
-  // inputSchema: z.object({
-  //   id: z.string().nullable().optional(),
-  //   threadId: z.string().nullable().optional(),
-  // }),
+  inputSchema: z.object({
+    id: z.string().nullable().optional(),
+    threadId: z.string().nullable().optional(),
+  }),
   // for production
-  inputSchema: z
-    .object({
-      id: z.string(),
-      threadId: z.string(),
-    })
-    .nullable()
-    .describe("Email ID and thread ID to extract metadata"),
+  // inputSchema: z
+  //   .object({
+  //     id: z.string(),
+  //     threadId: z.string(),
+  //   })
+  //   .nullable()
+  //   .describe("Email ID and thread ID to extract metadata"),
   outputSchema: ExtractEmailMetaDataOutput,
   execute: async ({ inputData, mastra }) => {
     if (!inputData || Object.values(inputData).some((v) => !v || !v.trim())) {
@@ -188,7 +188,13 @@ const extractEmailMetaData = createStep({
 
       const threadMessages = await getThreadMessages(threadId);
 
-      if (threadMessages && threadMessages.length > 1) return null;
+      if (threadMessages && threadMessages.length > 1) {
+        console.log(
+          "Thread has more than one message, skipping",
+          threadMessages.length
+        );
+        return null;
+      }
 
       const email = await getEmailContent(id!);
 
@@ -210,6 +216,7 @@ const extractEmailMetaData = createStep({
           : extractEmailAndName(userAddress);
 
       if (!userEmail?.includes("@gmail.com")) {
+        console.log("Email is not from Gmail, skipping", userEmail);
         return null;
       }
 
@@ -308,35 +315,32 @@ const extractEmailMetaData = createStep({
       try {
         const agent = mastra.getAgent("contextQAAgent");
         const result = await agent.generate(
-          "Analyze the email subject, body and application to determine the most likely job title the candidate is applying for, experience status and category. Output only a JSON object with the job title, experience status and category or 'unclear'.",
+          "Determine the most likely job title, experience status, and category for the application based on the email subject and body. Return a JSON object with these details or 'unclear'.",
           {
             instructions: `
-      You are given the subject and body of a job application email. Your task is to determine the most likely job title the candidate is applying for, experience status and category.
-      - Use explicit mentions, strong contextual clues, and careful reasoning to infer the job title, experience status and category.
-      - Only infer a job title if there is clear, unambiguous evidence in the subject or body (such as direct statements, repeated references, or a clear match between skills/experience and a standard job title).
-      - Do not guess or invent job titles that are not clearly supported by the content.
-      - Do not use any tools, functions, or API calls. Only analyze the provided subject and body.
-      - Normalize job titles to standard forms (e.g., "Full Stack Web Developer" and "Full Stack Developer" are equivalent).
-      - If multiple job titles are possible, return the one most strongly indicated by the content.
-      - If no job title can be reasonably and confidently inferred, return 'unclear'.
-      - Determine the category based on the job title and body of the email. If unsure, return 'unclear'.
-      - The category can be one of the following values: Developer, Web Designer, Recruiter, Sales / Marketing
-      - Output only a JSON object in the following format: {"job_title": "<job title or 'unclear'>", "experience_status": "<fresher or experienced or 'unclear'>", "category": "<Developer or Web Designer or Recruiter or Sales / Marketing or 'unclear'>"}
+      Analyze the subject and body of a job application email to identify the job title, experience status, and category:
+      - Identify explicit mentions or strong contextual clues pointing to the job title.
+      - Infer the experience status (fresher or experienced) based on details in the email.
+      - Categorize the application into one of: Developer, Web Designer, Recruiter, Sales / Marketing.
+      - Provide a normalized job title, avoiding guesses without clear evidence.
+      - If ambiguity exists, choose the most strongly suggested job title.
+      - If unclear, return 'unclear' for any of the fields.
+      - Output a JSON object: {"job_title": "<job title or 'unclear'>", "experience_status": "<fresher, experienced, or 'unclear'>", "category": "<Developer, Web Designer, Recruiter, Sales / Marketing, or 'unclear'>"}
       Examples:
-      Subject: "Applying for full stack developer"
-      Body: "I am writing to express my interest in the Full Stack Web Developer role. My background in both front-end and back-end development positions me to contribute effectively to your team."
+      Subject: "Full stack developer application"
+      Body: "I am keen to join as a Full Stack Web Developer with my experience in both frontend and backend."
       Output: {"job_title": "Full Stack Developer", "experience_status": "experienced", "category": "Developer"}
 
-      Subject: "Application for Web Designer"
-      Body: "I am interested in the Web Designer role."
+      Subject: "Web Designer role"
+      Body: "Applying for the Web Designer position."
       Output: {"job_title": "Web Designer", "experience_status": "unclear", "category": "Web Designer"}
 
       Subject: "Job application"
-      Body: "I am writing to express my interest in a position at your company. My experience is in recruitment."
+      Body: "My experience is in recruitment."
       Output: {"job_title": "Recruiter", "experience_status": "unclear", "category": "Recruiter"}
 
       Subject: "Job application"
-      Body: "I am writing to express my interest in a position at your company. My experience is in sales and marketing."
+      Body: "My expertise lies in sales and marketing."
       Output: {"job_title": "Sales / Marketing", "experience_status": "unclear", "category": "Sales / Marketing"}
 
       Subject: ${subject}
@@ -356,9 +360,9 @@ const extractEmailMetaData = createStep({
           ...emailMetaData,
           hasCoverLetter,
           hasResume,
-          position: generatedResult.job_title || "unclear",
-          category: generatedResult.category || "unclear",
-          experienceStatus: generatedResult.experience_status || "unclear",
+          position: generatedResult?.job_title || "unclear",
+          category: generatedResult?.category || "unclear",
+          experienceStatus: generatedResult?.experience_status || "unclear",
         };
       } catch (err) {
         console.log("error occured while extracting job title", err);
@@ -737,35 +741,35 @@ const recruitmentPreStageWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  .foreach(deduplicateNewlyArrivedMails)
-  .foreach(extractEmailMetaData)
-  .then(sortEmailData)
-  .branch([
-    [
-      async ({ inputData: { missingResumeEmails } }) =>
-        missingResumeEmails.length > 0,
-      sendResumeMissingMail,
-    ],
-    [
-      async ({ inputData: { missingCoverLetterEmails } }) =>
-        missingCoverLetterEmails.length > 0,
-      sendCoverLetterMissingEmail,
-    ],
-    [
-      async ({ inputData: { unclearPositionEmails } }) =>
-        unclearPositionEmails.length > 0,
-      sendUnclearPositionEmail,
-    ],
-    [
-      async ({ inputData: { multipleMissingDetailsEmails } }) =>
-        multipleMissingDetailsEmails.length > 0,
-      sendMultipleRejectionReasonsMail,
-    ],
-    [
-      async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
-      sendConfirmationEmail,
-    ],
-  ]);
+  // .foreach(deduplicateNewlyArrivedMails)
+  .foreach(extractEmailMetaData);
+// .then(sortEmailData)
+// .branch([
+//   [
+//     async ({ inputData: { missingResumeEmails } }) =>
+//       missingResumeEmails.length > 0,
+//     sendResumeMissingMail,
+//   ],
+//   [
+//     async ({ inputData: { missingCoverLetterEmails } }) =>
+//       missingCoverLetterEmails.length > 0,
+//     sendCoverLetterMissingEmail,
+//   ],
+//   [
+//     async ({ inputData: { unclearPositionEmails } }) =>
+//       unclearPositionEmails.length > 0,
+//     sendUnclearPositionEmail,
+//   ],
+//   [
+//     async ({ inputData: { multipleMissingDetailsEmails } }) =>
+//       multipleMissingDetailsEmails.length > 0,
+//     sendMultipleRejectionReasonsMail,
+//   ],
+//   [
+//     async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
+//     sendConfirmationEmail,
+//   ],
+// ]);
 
 recruitmentPreStageWorkflow.commit();
 

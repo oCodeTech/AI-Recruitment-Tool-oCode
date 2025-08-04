@@ -378,7 +378,7 @@ export const sendThreadReplyEmail = async ({
         position && position !== "unclear" ? position : "applied"
       )
       .replaceAll("[Company Name]", "oCode Technologies");
-      
+
     const sendMailResp = await sendEmail({
       to: userEmail,
       subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,

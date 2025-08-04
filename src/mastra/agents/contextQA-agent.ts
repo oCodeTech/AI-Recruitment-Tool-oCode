@@ -3,14 +3,6 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { context7Mcp } from "../mcpservers/context7";
-import { ragMcp } from "../mcpservers/rag";
-
-const context7Tools = await context7Mcp.getTools();
-const raq_query_tools = await ragMcp.getTools();
-const contextTools = {
-  ...context7Tools,
-  ...raq_query_tools,
-};
 
 export const contextQAAgent = new Agent({
   name: "Context QA Agent",
@@ -111,7 +103,7 @@ You strictly follow a Retrieval-Augmented Generation (RAG) methodology and only 
 **You are not a general-purpose assistant. Only answer using verified sources from the Context7 and RAG systems. Follow the workflow, and ensure factual integrity in every response.**
 `,
   model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
-  tools: contextTools,
+  tools: await context7Mcp.getTools(),
   memory: new Memory({
     options: {
       threads: {

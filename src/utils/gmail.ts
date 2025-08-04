@@ -378,25 +378,7 @@ export const sendThreadReplyEmail = async ({
         position && position !== "unclear" ? position : "applied"
       )
       .replaceAll("[Company Name]", "oCode Technologies");
-
-    console.log("replyMail", replyMail);
-
-    console.log("send mail params", {
-      to: userEmail,
-      subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,
-      body: replyMail,
-      inReplyTo: inReplyTo,
-      references: references,
-      threadId: threadId,
-    });
-
-    console.log("modifyEmailLabels params", {
-      emailId: emailId,
-      threadId: threadId,
-      addLabelIds: addLabelIds || [],
-      removeLabelIds: removeLabelIds || [],
-    });
-
+      
     const sendMailResp = await sendEmail({
       to: userEmail,
       subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,

@@ -286,7 +286,7 @@ const deleteLabels = async () => {
   }
 };
 
-getInboxMails();
+// getInboxMails();
 
 cron.schedule("0 */2 * * *", () => {
   console.log(" Executing recruitment workflows...");

@@ -10,6 +10,7 @@ import {
   sendThreadReplyEmail,
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
+import { fastParseEmail } from "../../utils/emailUtils";
 
 const recruitmentMail = process.env.RECRUITMENT_MAIL;
 const consultingMail = process.env.CONSULTING_MAIL;
@@ -281,10 +282,10 @@ const extractEmailMetaData = createStep({
 
       const relevantSubject =
         relevantSubjectKeywords.some((keyword) =>
-          subject?.toLowerCase().includes(keyword)
+          subject?.toLowerCase().includes(keyword.toLowerCase())
         ) &&
         !irrelevantSubjectKeywords.some((keyword) =>
-          subject?.toLowerCase().includes(keyword)
+          subject?.toLowerCase().includes(keyword.toLowerCase())
         );
 
       if (!relevantSubject) {
@@ -433,6 +434,24 @@ const extractEmailMetaData = createStep({
         .join(" ")
         .split("[")[0];
 
+      const fastResult = fastParseEmail(subject ?? "", decodedBody);
+
+      if (
+        fastResult &&
+        Object.keys(fastResult).length > 0 &&
+        fastResult.category &&
+        fastResult.category !== "unclear"
+      ) {
+        return {
+          ...emailMetaData,
+          hasCoverLetter,
+          hasResume,
+          position: fastResult?.job_title.trim() ?? potentialJobTitle ?? "unclear",
+          category: fastResult.category || "unclear",
+          experienceStatus: fastResult.experience_status || "unclear",
+        };
+      }
+
       try {
         const agent = mastra.getAgent("contextQAAgent");
         const result = await agent.generate(
@@ -441,8 +460,8 @@ const extractEmailMetaData = createStep({
             instructions: `
 You are a job-application parser.  
 Input variables:  
-- SUBJECT: ${subject}  
-- BODY: ${decodedBody}  
+- SUBJECT: ${subject?.trim()}  
+- BODY: ${decodedBody.trim()}  
 - HINT_TITLE: ${potentialJobTitle ? `'${potentialJobTitle}'` : "None"}
 
 Return **only** valid JSON:  
@@ -495,16 +514,22 @@ Return **only** the JSON object—no explanation.
         };
       } catch (err) {
         console.log(
-          "Error occured while extracting candidate details from email",
+          "Error occured while extracting candidate details from email body",
           err
         );
+
+        // Wait 60 000 ms before the thread continues
+        console.log("Waiting 1 minute before the thread continues");
+        await new Promise<void>((resolve) => {
+          setTimeout(() => {
+            console.log("Resuming thread after 1 minute wait");
+            resolve();
+          }, 60_000);
+        });
         return null;
       }
     } catch (err) {
-      console.log(
-        "Error occured while extracting candidate details from email",
-        err
-      );
+      console.log("Error occured while extracting details from email", err);
       return null;
     }
   },

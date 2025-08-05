@@ -280,7 +280,7 @@ const deleteLabels = async () => {
 
 // getInboxMails();
 
-cron.schedule("0 */1 * * *", () => {
+cron.schedule("0 */2 * * *", () => {
   console.log(" Executing recruitment workflows...");
 
   const workflowIds = [

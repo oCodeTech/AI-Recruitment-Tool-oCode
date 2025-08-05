@@ -120,6 +120,7 @@ const getInboxMails = async () => {
     from: string | null | undefined;
     subject: string | null | undefined;
     snippet: string | null | undefined;
+    date: string | null | undefined;
   }[] = [];
 
   for (let mail of searchResultOfSearchedMails) {
@@ -136,12 +137,19 @@ const getInboxMails = async () => {
         (h) => h.name && h.name.toLowerCase() === "subject"
       )?.value,
       snippet: data?.snippet,
+      date: data?.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "date"
+      )?.value,
     };
 
     inboxMails.push(mailContent);
   }
 
-  console.table(inboxMails);
+  console.table(
+    inboxMails.sort((a, b) =>
+      new Date(b.date || "").getTime() - new Date(a.date || "").getTime()
+    )
+  );
 };
 
 const getSentMails = async () => {
@@ -278,7 +286,7 @@ const deleteLabels = async () => {
   }
 };
 
-// getInboxMails();
+getInboxMails();
 
 cron.schedule("0 */2 * * *", () => {
   console.log(" Executing recruitment workflows...");

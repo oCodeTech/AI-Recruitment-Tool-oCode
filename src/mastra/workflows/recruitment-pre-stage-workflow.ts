@@ -66,7 +66,7 @@ const AgentTrigger = createStep({
     const searchInboxInput = {
       userId: "me",
       q: `label:inbox -label:pre-stage`,
-      maxResults: 100,
+      maxResults: 50,
     };
 
     try {
@@ -154,18 +154,18 @@ const extractEmailMetaData = createStep({
   id: "extract-email-meta-data",
   description: "Extracts email metadata by email ID and thread ID",
   // for development
-  // inputSchema: z.object({
-  //   id: z.string().nullable().optional(),
-  //   threadId: z.string().nullable().optional(),
-  // }),
+  inputSchema: z.object({
+    id: z.string().nullable().optional(),
+    threadId: z.string().nullable().optional(),
+  }),
   // for production
-  inputSchema: z
-    .object({
-      id: z.string(),
-      threadId: z.string(),
-    })
-    .nullable()
-    .describe("Email ID and thread ID to extract metadata"),
+  // inputSchema: z
+  //   .object({
+  //     id: z.string(),
+  //     threadId: z.string(),
+  //   })
+  //   .nullable()
+  //   .describe("Email ID and thread ID to extract metadata"),
   outputSchema: ExtractEmailMetaDataOutput,
   execute: async ({ inputData, mastra }) => {
     if (!inputData || Object.values(inputData).some((v) => !v || !v.trim())) {
@@ -242,6 +242,7 @@ const extractEmailMetaData = createStep({
         "application received",
         "new application received",
         "application for",
+        "Applying for",
         "job application",
         "job candidate",
         "applied for",
@@ -762,7 +763,7 @@ const sendConfirmationEmail = createStep({
           if (!templateId) {
             await modifyEmailLabels({
               emailId: mail.id,
-              addLabelIds: ["Unclear Applications","Pre-Stage"],
+              addLabelIds: ["Unclear Applications", "Pre-Stage"],
             });
             continue;
           }
@@ -834,7 +835,7 @@ const sendConfirmationEmail = createStep({
         default:
           await modifyEmailLabels({
             emailId: mail.id,
-            addLabelIds: ["Unclear Applications", "Pre-Stage"]
+            addLabelIds: ["Unclear Applications", "Pre-Stage"],
           });
           break;
       }
@@ -867,7 +868,7 @@ const recruitmentPreStageWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  .foreach(deduplicateNewlyArrivedMails)
+  // .foreach(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
   .then(sortEmailData);
 // .branch([

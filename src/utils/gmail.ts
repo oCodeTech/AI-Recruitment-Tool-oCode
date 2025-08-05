@@ -280,7 +280,7 @@ export const modifyEmailLabels = async ({
   emailId: string;
   threadId?: string;
   addLabelIds: string[];
-  removeLabelIds: string[];
+  removeLabelIds?: string[];
 }) => {
   try {
     const existingLabels = await gmailClient.users.labels.list({
@@ -292,7 +292,7 @@ export const modifyEmailLabels = async ({
 
     const resolvedAddLabelIds = await resolveLabelIds(addLabelIds);
 
-    const resolvedRemoveLabelIds = removeLabelIds
+    const resolvedRemoveLabelIds = removeLabelIds && removeLabelIds
       .map((name) => {
         if (["INBOX", "UNREAD", "STARRED", "IMPORTANT"].includes(name))
           return name;

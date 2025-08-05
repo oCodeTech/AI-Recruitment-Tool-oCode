@@ -265,6 +265,9 @@ const extractEmailMetaData = createStep({
         "sale",
         "buy now",
         "thank you for subscribing",
+        "follow us",
+        "follow up",
+        "follow-up",
         "webinar",
         "event invite",
         "no-reply",
@@ -490,18 +493,17 @@ Return **only** the JSON object—no explanation.
           experienceStatus: generatedResult?.experience_status || "unclear",
         };
       } catch (err) {
-        console.log("error occured while extracting job title", err);
-        return {
-          ...emailMetaData,
-          hasCoverLetter,
-          hasResume,
-          position: null,
-          category: null,
-          experienceStatus: null,
-        };
+        console.log(
+          "Error occured while extracting candidate details from email",
+          err
+        );
+        return null;
       }
     } catch (err) {
-      console.log(err);
+      console.log(
+        "Error occured while extracting candidate details from email",
+        err
+      );
       return null;
     }
   },
@@ -716,7 +718,7 @@ const sendUnclearPositionEmail = createStep({
         inReplyTo: mail.messageId,
         references: [mail.messageId],
         templateId: "templates-rejection-no_clear_job_position",
-        addLabelIds: ["Pre-Stage"],
+        addLabelIds: ["Pre-Stage", "Unclear Applications"],
       });
     }
 
@@ -750,17 +752,17 @@ const sendConfirmationEmail = createStep({
       switch (mail.category) {
         case "Developer":
           const templateId =
-            mail.experienceStatus === "experienced"
+            mail.experienceStatus === "experienced" ||
+            mail.experienceStatus === "unclear"
               ? "templates-request_key_details-developer-experienced"
               : mail.experienceStatus === "fresher"
                 ? "templates-request_key_details-developer-fresher"
                 : null;
 
-          if (!templateId || !mail.position || mail.position === "unclear") {
+          if (!templateId) {
             await modifyEmailLabels({
               emailId: mail.id,
-              addLabelIds: ["Unclear Applications"],
-              removeLabelIds: ["Pre-Stage"],
+              addLabelIds: ["Unclear Applications","Pre-Stage"],
             });
             continue;
           }
@@ -832,8 +834,7 @@ const sendConfirmationEmail = createStep({
         default:
           await modifyEmailLabels({
             emailId: mail.id,
-            addLabelIds: ["Unclear Applications"],
-            removeLabelIds: ["Pre-Stage"],
+            addLabelIds: ["Unclear Applications", "Pre-Stage"]
           });
           break;
       }

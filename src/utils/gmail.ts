@@ -14,6 +14,7 @@ interface EmailData {
   to: string | null;
   subject: string | null;
   body: string;
+  rawMessage?: string;
   inReplyTo?: string;
   references?: string[];
   threadId: string;
@@ -161,9 +162,9 @@ export const containsKeyword = ({
 
   return keywords.some((kw) => {
     // Regex pattern (starts/ends with /)
-    if (kw.startsWith('/') && kw.endsWith('/')) {
+    if (kw.startsWith("/") && kw.endsWith("/")) {
       try {
-        return new RegExp(kw.slice(1, -1), 'i').test(text);
+        return new RegExp(kw.slice(1, -1), "i").test(text);
       } catch {
         return false;
       }
@@ -212,59 +213,55 @@ export const sendEmail = async ({
   references,
   threadId,
   bccEmail = "career@browsewire.net",
+  rawMessage,
 }: EmailData) => {
   if (!to || !subject || !body || !threadId) {
     throw new Error("Email data is required");
   }
-
   if (typeof threadId !== "string" || threadId.trim() === "") {
     throw new Error("Invalid threadId");
   }
-
-  const recruitmentEmail = process.env.RECRUITMENT_EMAIL;
-
-  if (!recruitmentEmail) {
-    throw new Error("RECRUITMENT_EMAIL environment variable is not set");
+  const recruitmentMail = process.env.RECRUITMENT_MAIL;
+  if (!recruitmentMail) {
+    throw new Error("RECRUITMENT_MAIL environment variable is not set");
   }
-
-  let headers = `From: oCode Recruiter <${recruitmentEmail}>\r\nTo: ${to}\r\nSubject: ${subject}`;
-
-  if (inReplyTo) {
-    headers += `\r\nIn-Reply-To: ${inReplyTo}`;
-  }
-
-  if (references && references.length > 0) {
-    headers += `\r\nReferences: ${references.join(" ")}`;
-  }
-
-  if (bccEmail) {
-    headers += `\r\nBcc: ${bccEmail}`;
-  }
-
-  const rawMessage = Buffer.from(`${headers}\r\n\r\n${body}`)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
 
   try {
-    /*************  ✨ Windsurf Command 🌟  *************/
+    if (rawMessage) {
+      const response = await gmailClient.users.messages.send({
+        userId: "me",
+        requestBody: {
+          raw: rawMessage,
+          threadId: threadId,
+        },
+      });
+      return response.data;
+    }
+
+    let headers = `From: oCode Recruiter <${recruitmentMail}>\r\nTo: ${to}\r\nSubject: ${subject}`;
+    if (inReplyTo) {
+      headers += `\r\nIn-Reply-To: ${inReplyTo}`;
+    }
+    if (references && references.length > 0) {
+      headers += `\r\nReferences: ${references.join(" ")}`;
+    }
+    if (bccEmail) {
+      headers += `\r\nBcc: ${bccEmail}`;
+    }
+
+    const emailRawMessage = Buffer.from(`${headers}\r\n\r\n${body}`)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
     const response = await gmailClient.users.messages.send({
       userId: "me",
       requestBody: {
-        raw: rawMessage,
+        raw: emailRawMessage,
         threadId: threadId,
-        payload: {
-          headers: [
-            { name: "From", value: `Your Name <your.email@example.com>` },
-            { name: "To", value: to },
-            { name: "Subject", value: subject },
-          ],
-        },
       },
     });
-    /*******  a667827e-65f9-4086-87e1-81726270fc51  *******/
-
     return response.data;
   } catch (error) {
     throw error;
@@ -292,17 +289,19 @@ export const modifyEmailLabels = async ({
 
     const resolvedAddLabelIds = await resolveLabelIds(addLabelIds);
 
-    const resolvedRemoveLabelIds = removeLabelIds && removeLabelIds
-      .map((name) => {
-        if (["INBOX", "UNREAD", "STARRED", "IMPORTANT"].includes(name))
-          return name;
+    const resolvedRemoveLabelIds =
+      removeLabelIds &&
+      removeLabelIds
+        .map((name) => {
+          if (["INBOX", "UNREAD", "STARRED", "IMPORTANT"].includes(name))
+            return name;
 
-        if (labelMap.has(name)) return labelMap.get(name);
+          if (labelMap.has(name)) return labelMap.get(name);
 
-        console.warn(`Label not found: ${name}`);
-        return null;
-      })
-      .filter((id): id is string => !!id);
+          console.warn(`Label not found: ${name}`);
+          return null;
+        })
+        .filter((id): id is string => !!id);
 
     const response = await gmailClient.users.messages.modify({
       userId: "me",
@@ -379,7 +378,6 @@ export const sendThreadReplyEmail = async ({
 }: ConfirmationEmailProps): Promise<gmail_v1.Schema$Message> => {
   try {
     let templateMailBody = "";
-
     switch (templateId) {
       case "templates-rejection-missing_multiple_details":
         templateMailBody = missingMultipleDetailsTemplate;
@@ -412,7 +410,6 @@ export const sendThreadReplyEmail = async ({
         console.error(`Template not found in switch case: ${templateId}`);
         break;
     }
-
     if (!templateMailBody) throw new Error(`${templateId} template not found`);
 
     const replyMail = templateMailBody
@@ -423,6 +420,69 @@ export const sendThreadReplyEmail = async ({
       )
       .replaceAll("[Company Name]", "oCode Technologies");
 
+    const htmlBody = replyMail
+      .split("\n")
+      .map((line) => {
+        const trimmedLine = line.trim();
+
+        if (trimmedLine === "") {
+          return "<br>";
+        }
+
+        return `<p style="margin: 0 0 1em 0; font-family: Arial, sans-serif; line-height: 1.6; color: #333333;">${trimmedLine}</p>`;
+      })
+      .join("");
+
+    const fullHtmlBody = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${subject?.includes("Re:") ? subject : `Re: ${subject}`}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f8f9fa; color: #333333;">
+  <div style="width: 100%; padding: 20px; background-color: #ffffff; box-sizing: border-box;">
+    ${htmlBody}
+  </div>
+</body>
+</html>`;
+
+    const boundary = "boundary_" + Math.random().toString(36).substring(7);
+    const recruitmentEmail = process.env.RECRUITMENT_MAIL || "hi@ocode.co";
+    const senderName = process.env.RECRUITER_NAME || "oCode Recruiter";
+    const bccEmail = process.env.BCC_MAIL || "career@browsewire.net";
+
+    const emailContent = [
+      `From: ${senderName} <${recruitmentEmail}>`,
+      `To: ${userEmail}`,
+      `Subject: ${subject?.includes("Re:") ? subject : `Re: ${subject}`}`,
+      `In-Reply-To: ${inReplyTo}`,
+      `References: ${references?.join(" ")}`,
+      `Bcc: ${bccEmail}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      `Content-Type: text/plain; charset="UTF-8"`,
+      `Content-Transfer-Encoding: 7bit`,
+      "",
+      replyMail,
+      "",
+      `--${boundary}`,
+      `Content-Type: text/html; charset="UTF-8"`,
+      `Content-Transfer-Encoding: 7bit`,
+      "",
+      fullHtmlBody,
+      "",
+      `--${boundary}--`,
+    ].join("\r\n");
+
+    const rawMessage = Buffer.from(emailContent)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
     const sendMailResp = await sendEmail({
       to: userEmail,
       subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,
@@ -430,6 +490,8 @@ export const sendThreadReplyEmail = async ({
       inReplyTo: inReplyTo,
       references: references,
       threadId: threadId,
+      bccEmail: bccEmail,
+      rawMessage: rawMessage,
     });
 
     if (sendMailResp.id && sendMailResp.labelIds?.includes("SENT")) {
@@ -440,7 +502,6 @@ export const sendThreadReplyEmail = async ({
         removeLabelIds: removeLabelIds || [],
       });
     }
-
     return sendMailResp;
   } catch (err) {
     console.log(err);

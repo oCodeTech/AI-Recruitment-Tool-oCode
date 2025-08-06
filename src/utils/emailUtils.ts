@@ -207,3 +207,4 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     category,
   };
 }
+  

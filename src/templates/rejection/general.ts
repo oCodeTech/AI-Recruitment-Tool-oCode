@@ -1,17 +1,1 @@
-export const generalRejectionTemplate = `
-Dear [Candidate Name],
-
-I hope this email finds you well. Thank you for taking the time to apply for the [Job Title] position at [Company Name]. We genuinely appreciate your interest and effort throughout the application process.
-
-After careful consideration and evaluation of your qualifications and experience, we regret to inform you that we have decided not to proceed with your application at this time. We received a large number of applications from highly qualified candidates, making the selection process extremely competitive.
-
-Please know that our decision does not reflect on your skills or potential. We recognize the value you could bring to an organization and encourage you to continue pursuing opportunities that align with your career aspirations.
-
-We sincerely appreciate your interest in our company and wish you the very best in your job search. Your application will remain on file with us, and we will reach out should a suitable opportunity arise in the future that matches your qualifications.
-
-Thank you again for considering [Company Name] as a potential employer. If you have any questions or would like feedback on your application, please feel free to reach out. We are here to assist you in any way we can.
-
-Best regards,
-The Recruitment Team
-[Company Name]
-`;
+export const generalRejectionTemplate = `Dear [Candidate Name],\r\n\r\nI hope this email finds you well. Thank you for taking the time to apply for the [Job Title] position at [Company Name]. We genuinely appreciate your interest and effort throughout the application process.\r\n\r\nAfter careful consideration and evaluation of your qualifications and experience, we regret to inform you that we have decided not to proceed with your application at this time. We received a large number of applications from highly qualified candidates, making the selection process extremely competitive.\r\n\r\nPlease know that our decision does not reflect on your skills or potential. We recognize the value you could bring to an organization and encourage you to continue pursuing opportunities that align with your career aspirations.\r\n\r\nWe sincerely appreciate your interest in our company and wish you the very best in your job search. Your application will remain on file with us, and we will reach out should a suitable opportunity arise in the future that matches your qualifications.\r\n\r\nThank you again for considering [Company Name] as a potential employer. If you have any questions or would like feedback on your application, please feel free to reach out. We are here to assist you in any way we can.\r\n\r\nBest Regards,\r\n\r\nThe Recruitment Team\r\n[Company Name]`;

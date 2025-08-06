@@ -757,7 +757,7 @@ const sendConfirmationEmail = createStep({
   description: "Sends confirmation email to candidate",
   inputSchema: SortEmailDataOutput,
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
-  execute: async ({ inputData: { confirmEmails }, mastra }) => {
+  execute: async ({ inputData: { confirmEmails } }) => {
     if (!confirmEmails || confirmEmails.length === 0) {
       console.log(
         "No confirmed email data found for sendConfirmationEmail step"
@@ -841,7 +841,7 @@ const sendConfirmationEmail = createStep({
           });
           break;
 
-        case "CREATIVE":
+        case "Web Designer":
           await sendThreadReplyEmail({
             name: mail.name || "",
             position: mail.position || "unclear",
@@ -895,7 +895,7 @@ const recruitmentPreStageWorkflow = createWorkflow({
   .then(AgentTrigger)
   // .foreach(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
-  .then(sortEmailData);
+  .then(sortEmailData)
 // .branch([
 //   [
 //     async ({ inputData: { missingResumeEmails } }) =>

@@ -1029,7 +1029,7 @@ const trackReplyMailsWorkflow = createWorkflow({
   .then(AgentTrigger)
   // .then(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
-  .then(sortReplyEmails);
+  .then(sortReplyEmails)
 // .branch([
 //   [
 //     async ({ inputData: { applicants } }) => applicants.length > 0,

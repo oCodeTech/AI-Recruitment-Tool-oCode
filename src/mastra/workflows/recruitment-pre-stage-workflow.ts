@@ -155,18 +155,18 @@ const extractEmailMetaData = createStep({
   id: "extract-email-meta-data",
   description: "Extracts email metadata by email ID and thread ID",
   // for development
-  inputSchema: z.object({
-    id: z.string().nullable().optional(),
-    threadId: z.string().nullable().optional(),
-  }),
+  // inputSchema: z.object({
+  //   id: z.string().nullable().optional(),
+  //   threadId: z.string().nullable().optional(),
+  // }),
   // for production
-  // inputSchema: z
-  //   .object({
-  //     id: z.string(),
-  //     threadId: z.string(),
-  //   })
-  //   .nullable()
-  //   .describe("Email ID and thread ID to extract metadata"),
+  inputSchema: z
+    .object({
+      id: z.string(),
+      threadId: z.string(),
+    })
+    .nullable()
+    .describe("Email ID and thread ID to extract metadata"),
   outputSchema: ExtractEmailMetaDataOutput,
   execute: async ({ inputData, mastra }) => {
     if (!inputData || Object.values(inputData).some((v) => !v || !v.trim())) {
@@ -446,7 +446,8 @@ const extractEmailMetaData = createStep({
           ...emailMetaData,
           hasCoverLetter,
           hasResume,
-          position: fastResult?.job_title.trim() ?? potentialJobTitle ?? "unclear",
+          position:
+            fastResult?.job_title.trim() ?? potentialJobTitle ?? "unclear",
           category: fastResult.category || "unclear",
           experienceStatus: fastResult.experience_status || "unclear",
         };
@@ -893,35 +894,35 @@ const recruitmentPreStageWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  // .foreach(deduplicateNewlyArrivedMails)
+  .foreach(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
   .then(sortEmailData)
-// .branch([
-//   [
-//     async ({ inputData: { missingResumeEmails } }) =>
-//       missingResumeEmails.length > 0,
-//     sendResumeMissingMail,
-//   ],
-//   [
-//     async ({ inputData: { missingCoverLetterEmails } }) =>
-//       missingCoverLetterEmails.length > 0,
-//     sendCoverLetterMissingEmail,
-//   ],
-//   [
-//     async ({ inputData: { unclearPositionEmails } }) =>
-//       unclearPositionEmails.length > 0,
-//     sendUnclearPositionEmail,
-//   ],
-//   [
-//     async ({ inputData: { multipleMissingDetailsEmails } }) =>
-//       multipleMissingDetailsEmails.length > 0,
-//     sendMultipleRejectionReasonsMail,
-//   ],
-//   [
-//     async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
-//     sendConfirmationEmail,
-//   ],
-// ]);
+  .branch([
+    [
+      async ({ inputData: { missingResumeEmails } }) =>
+        missingResumeEmails.length > 0,
+      sendResumeMissingMail,
+    ],
+    [
+      async ({ inputData: { missingCoverLetterEmails } }) =>
+        missingCoverLetterEmails.length > 0,
+      sendCoverLetterMissingEmail,
+    ],
+    [
+      async ({ inputData: { unclearPositionEmails } }) =>
+        unclearPositionEmails.length > 0,
+      sendUnclearPositionEmail,
+    ],
+    [
+      async ({ inputData: { multipleMissingDetailsEmails } }) =>
+        multipleMissingDetailsEmails.length > 0,
+      sendMultipleRejectionReasonsMail,
+    ],
+    [
+      async ({ inputData: { confirmEmails } }) => confirmEmails.length > 0,
+      sendConfirmationEmail,
+    ],
+  ]);
 
 recruitmentPreStageWorkflow.commit();
 

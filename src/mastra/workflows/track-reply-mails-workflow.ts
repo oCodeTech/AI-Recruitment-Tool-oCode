@@ -73,7 +73,6 @@ const AgentTrigger = createStep({
     const searchInboxInput = {
       userId: "me",
       q: `label:Stage1 Interview OR label:Pre-Stage`,
-      labelIds: ["Stage1 Interview", "Pre-Stage", "Developer", "Recruiter"],
       maxResults: 20,
     };
     try {

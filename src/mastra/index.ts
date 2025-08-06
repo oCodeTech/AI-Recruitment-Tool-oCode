@@ -15,6 +15,7 @@ import jobOpeningsRoutes from "./routes/jobOpeningsRoutes";
 import { ragAgent } from "./agents/rag-agent";
 import { getGmailClient } from "../OAuth/getGmailClient";
 import {
+  decodeEmailBody,
   getEmailContent,
   getLabelNames,
   getThreadMessages,
@@ -236,7 +237,9 @@ const getLatestMsgByLabels = async () => {
   const inboxThreadMails: {
     from: string | null | undefined;
     subject: string | null | undefined;
-    snippet: string | null | undefined;
+    bcc: string | null | undefined;
+    body: string | null | undefined;
+    // snippet: string | null | undefined;
   }[] = [];
 
   for (let mail of searchResultOfSearchedThreadMails) {
@@ -261,13 +264,20 @@ const getLatestMsgByLabels = async () => {
       subject: data?.payload?.headers?.find(
         (h) => h.name && h.name.toLowerCase() === "subject"
       )?.value,
-      snippet: data?.snippet,
+      bcc: data?.payload?.headers?.find(
+        (h) => h.name && h.name.toLowerCase() === "bcc"
+      )?.value,
+      body: decodeEmailBody(data.payload?.parts
+          ?.find((p) => p.mimeType === "multipart/alternative")
+          ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
+        data.payload?.parts?.find((p) => p.mimeType === "text/plain")),
+      // snippet: data?.snippet,
     };
 
     inboxThreadMails.push(mailContent);
   }
   console.log("inboxThreadMails", inboxThreadMails.length);
-  console.table(inboxThreadMails);
+  console.log(inboxThreadMails);
 };
 
 const deleteLabels = async () => {
@@ -287,7 +297,7 @@ const deleteLabels = async () => {
   }
 };
 
-// getInboxMails();
+// getLatestMsgByLabels();
 
 cron.schedule("0 */2 * * *", () => {
   console.log(" Executing recruitment workflows...");

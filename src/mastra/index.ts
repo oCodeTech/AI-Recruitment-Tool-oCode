@@ -6,8 +6,6 @@ import { recruitmentPreStageWorkflow } from "./workflows/recruitment-pre-stage-w
 import { trackReplyMailsWorkflow } from "./workflows/track-reply-mails-workflow";
 import { contextQAAgent } from "./agents/contextQA-agent";
 import { webCrawlerAgent } from "./agents/webCrawler-agent";
-import { jobCrawlerWorkflow } from "./workflows/job-crawler-workflow";
-
 import express from "express";
 import cors from "cors";
 import cron from "node-cron";
@@ -40,7 +38,6 @@ export const mastra = new Mastra({
     // current recruit workflow
     recruitmentPreStageWorkflow,
     trackReplyMailsWorkflow,
-    jobCrawlerWorkflow,
   },
   agents: {
     ragAgent,
@@ -227,7 +224,7 @@ const getLatestMsgByLabels = async () => {
 
   const searchInboxInputForSearchingThreadEmails = {
     userId: "me",
-    q: `label:Developer OR label:Stage1 Interview OR label:Recruiter OR label:Pre-Stage`,
+    q: `label:"Stage1 Interview" OR label:"Pre-Stage"`,
     maxResults: 20,
   };
   const searchResultOfSearchedThreadMails = await gmailSearchEmails(

@@ -207,4 +207,156 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     category,
   };
 }
-  
+
+interface DetailedCandidateInfo {
+  position: string;
+  currentCTC: string;
+  expectedCTC: string;
+  workExp: string;
+  interviewTime: string;
+  location: string;
+  agreement: string;
+  education?: string;
+  contact?: string;
+  linkedIn?: string;
+  facebook?: string;
+  callTime?: string;
+  resume?: string;
+  lastAppraisal?: string;
+  switchingReason?: string;
+  totalWorkExp?: string;
+  currLoc?: string;
+  github?: string;
+  stackOverflow?: string;
+}
+
+type DetailedParseResult = DetailedCandidateInfo | null;
+
+export function extractDetailedCandidateInfo(
+  subject: string,
+  body: string
+): DetailedParseResult {
+  // Normalize text by replacing newlines, extra spaces, and special bullets
+  const text = (subject + " " + body)
+    .replace(/\r\n|\r|\n/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[•*\-·]/g, "•") // Normalize all bullet characters to •
+    .trim()
+    .toLowerCase();
+
+  // Helper function to extract field value
+  const extractField = (pattern: RegExp): string => {
+    const match = text.match(pattern);
+    return match && match[1] ? match[1].trim() : "N/A";
+  };
+
+  /* ---------- 1. Position extraction ---------- */
+  let position: string = "N/A";
+  if (subject) {
+    // Subject-specific patterns (updated to handle "Re:" prefix)
+    const subjectPatterns = [
+      /^(?:Re:\s*)?Application for (.+?)(?:\s*\(|\s+Role|\s+Position|$)/i,
+      /^(?:Re:\s*)?New application received for the position of (.+?)(?:\s+at\s+)/i,
+      /^(?:Re:\s*)?Job Opening: (.+?)(?:\s*\[|\s+at|$)/i,
+      /^(?:Re:\s*)?Applying for the (.+?)(?:\s+Role|\s+Position|$)/i,
+      /^(?:Re:\s*)?I'm interested in (.+?)(?:\s+Role|\s+Position|$)/i,
+      /^(?:Re:\s*)?Applying for the post of (.+)$/i,
+      /^(?:Re:\s*)?Application for (.+)$/i,
+    ];
+
+    for (const pattern of subjectPatterns) {
+      const match = subject.match(pattern);
+      if (match) {
+        position = match[1].trim();
+        break;
+      }
+    }
+
+    // Clean up common prefixes and suffixes
+    if (position !== "N/A") {
+      position = position
+        .replace(/^post of\s+/i, "")
+        .replace(/^position of\s+/i, "")
+        .replace(/^frontend\s+/i, "")
+        .replace(/\s+Position$/i, "")
+        .replace(/\s+Role$/i, "")
+        .replace(/\s+at\s+.+$/i, "")
+        .replace(/\s*\[.+\]$/, "")
+        .trim();
+    }
+  }
+
+  // If subject didn't yield a position, try body
+  if (position === "N/A" && body) {
+    position = extractField(/•\s*position\s+applied\s+for:\s*([^•]+)/i);
+  }
+
+  /* ---------- 2. Current CTC extraction ---------- */
+  const currentCTC = extractField(/•\s*current\s+ctc[^:]*:\s*([^•]+)/i);
+
+  /* ---------- 3. Expected CTC extraction ---------- */
+  const expectedCTC = extractField(/•\s*expected\s+ctc:\s*([^•]+)/i);
+
+  /* ---------- 4. Work Experience extraction ---------- */
+  const workExp = extractField(
+    /•\s*total\s+relevant\s+work\s+experience:\s*([^•]+)/i
+  );
+
+  /* ---------- 5. Interview Time extraction ---------- */
+  const interviewTime = extractField(
+    /•\s*probable\s+date\s*&\s+time\s+for\s+personal\s+interview:\s*([^•]+)/i
+  );
+
+  /* ---------- 6. Location extraction ---------- */
+  const location = extractField(/•\s*current\s+location:\s*([^•]+)/i);
+
+  /* ---------- 7. Agreement extraction ---------- */
+  const agreement = extractField(
+    /•\s*whether\s+ready\s+to\s+sign[^:]*:\s*([^•]+)/i
+  );
+
+  /* ---------- 8. Other fields extraction ---------- */
+  const education = extractField(
+    /•\s*highest\s+education\s+qualification:\s*([^•]+)/i
+  );
+  const contact = extractField(/•\s*verified\s+contact\s+number:\s*([^•]+)/i);
+  const linkedIn = extractField(/•\s*linkedin\s+profile:\s*([^•]+)/i);
+  const facebook = extractField(/•\s*facebook\s+profile:\s*([^•]+)/i);
+  const callTime = extractField(/•\s*best\s+time\s+to\s+call:\s*([^•]+)/i);
+  const resume = text.includes("resume")
+    ? "Attached"
+    : extractField(/•\s*resume:\s*([^•]+)/i);
+  const lastAppraisal = extractField(/•\s*last\s+appraisal[^:]*:\s*([^•]+)/i);
+  const switchingReason = extractField(
+    /•\s*the\s+reason\s+for\s+switching[^:]*:\s*([^•]+)/i
+  );
+  const github = extractField(/•\s*github\s+repository:\s*([^•]+)/i);
+  const stackOverflow = extractField(/•\s*stackoverflow\s+profile:\s*([^•]+)/i);
+
+  // Create result object
+  const result: DetailedCandidateInfo = {
+    position,
+    currentCTC,
+    expectedCTC,
+    workExp,
+    interviewTime,
+    location,
+    agreement,
+    education,
+    contact,
+    linkedIn,
+    facebook,
+    callTime,
+    resume,
+    lastAppraisal,
+    switchingReason,
+    github,
+    stackOverflow,
+  };
+
+  // Set duplicate fields
+  if (workExp !== "N/A") result.totalWorkExp = workExp;
+  if (location !== "N/A") result.currLoc = location;
+
+  return result;
+}

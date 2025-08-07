@@ -15,6 +15,7 @@ import {
   extractJsonFromResult,
 } from "./recruitment-pre-stage-workflow";
 import { decodeEmailBody } from "../../utils/gmail";
+import { extractDetailedCandidateInfo } from "../../utils/emailUtils";
 
 interface ApplicantKeyDetails {
   position: string;
@@ -72,12 +73,12 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:Stage1 Interview OR label:Pre-Stage`,
+      q: `label:"Stage1 Interview" OR label:"Pre-Stage"`,
       maxResults: 20,
     };
     try {
       const searchResult = await gmailSearchEmails(searchInboxInput);
-      return searchResult.filter(({ id, threadId }) => id && threadId);
+      return searchResult;
     } catch (err) {
       console.log(err);
       return [{ id: "", threadId: "" }];
@@ -257,7 +258,10 @@ const extractEmailMetaData = createStep({
       );
 
       if (!filteredEmails) {
-        console.log("Email not filtered for email ID", id);
+        console.log(
+          "Email is not a reply to a stage1 interview, skipping",
+          labels
+        );
         return null;
       }
       return emailMetaData;
@@ -364,9 +368,9 @@ const analyseApplicants = createStep({
     for (let mail of applicants) {
       if (!mail || !mail.threadId) continue;
 
-      const gmailGroqAgent = mastra.getAgent("gmailGroqAgent");
+      const agent = mastra.getAgent("contextQAAgent");
 
-      if (!gmailGroqAgent) throw Error("Groq Agent not found");
+      if (!agent) throw Error("ContextQA Agent not found");
 
       const emailMetaData: z.infer<typeof analyseApplicantsOutput> = {
         id: mail.id || "",
@@ -379,47 +383,49 @@ const analyseApplicants = createStep({
         body: mail.body,
       };
 
-      if (!gmailGroqAgent) throw Error("Groq Agent not found");
-
       try {
-        const result = await gmailGroqAgent.generate(
-          `Extract key details from the following email body:\n\n${mail.body}`,
-          {
-            instructions: `
-You are an AI agent tasked with analyzing email bodies and extracting specific key details.
-
-Required fields: Always include these in the output JSON, even if the value is "N/A" (Not Applicable) or "unclear" (ambiguous).
-- position: string
-- currentCTC: string
-- expectedCTC: string
-- workExp: string
-- interviewTime: string
-- location: string
-- agreement: string
-
-Optional fields: Only include these in the output JSON if they are mentioned in the email body. If mentioned but the value is not clear, set to "unclear". If mentioned but the value is missing, set to "Not Provided". If not mentioned at all, omit the field from the output.
-- education
-- contact
-- linkedIn
-- facebook
-- callTime
-- resume
-- lastAppraisal
-- switchingReason
-- totalWorkExp
-- currLoc
-- github
-- stackOverflow
-
-Return the result as a JSON object with the required fields and any optional fields that are present in the email body.
-    `,
-            maxSteps: 20,
-            maxTokens: 1000,
-          }
+        const extractedDetails = extractDetailedCandidateInfo(
+          mail.subject,
+          mail.body
         );
-        const extractedDetails: ApplicantKeyDetails = extractJsonFromResult(
-          result.text
-        );
+        //         const result = await agent.generate(
+        //           `Extract key details from the following email body:\n\n${mail.body}`,
+        //           {
+        //             instructions: `
+        // You are an AI agent tasked with analyzing email bodies and extracting specific key details.
+
+        // Required fields: Always include these in the output JSON, even if the value is "N/A" (Not Applicable) or "unclear" (ambiguous).
+        // - position: string
+        // - currentCTC: string
+        // - expectedCTC: string
+        // - workExp: string
+        // - interviewTime: string
+        // - location: string
+        // - agreement: string
+
+        // Optional fields: Only include these in the output JSON if they are mentioned in the email body. If mentioned but the value is not clear, set to "unclear". If mentioned but the value is missing, set to "Not Provided". If not mentioned at all, omit the field from the output.
+        // - education
+        // - contact
+        // - linkedIn
+        // - facebook
+        // - callTime
+        // - resume
+        // - lastAppraisal
+        // - switchingReason
+        // - totalWorkExp
+        // - currLoc
+        // - github
+        // - stackOverflow
+
+        // Return the result as a JSON object with the required fields and any optional fields that are present in the email body.
+        //     `,
+        //             maxSteps: 20,
+        //             maxTokens: 1000,
+        //           }
+        //         );
+        //         const extractedDetails: ApplicantKeyDetails = extractJsonFromResult(
+        //           result.text
+        //         );
 
         const missingKeyDetails = extractedDetails
           ? Object.values(extractedDetails).some(
@@ -428,6 +434,11 @@ Return the result as a JSON object with the required fields and any optional fie
           : true;
 
         if (missingKeyDetails) {
+          incompleteApplicationsData.push(emailMetaData);
+          continue;
+        }
+
+        if (!extractedDetails) {
           incompleteApplicationsData.push(emailMetaData);
           continue;
         }
@@ -591,9 +602,9 @@ const analyseIncompleteApplications = createStep({
       // Job position extraction
 
       try {
-        const grokAgent = mastra.getAgent("gmailGroqAgent");
+        const agent = mastra.getAgent("contextQAAgent");
 
-        const result = await grokAgent.generate(
+        const result = await agent.generate(
           "Analyze the email subject, body and application to determine the most likely job title the candidate is applying for, experience status and category. Output only a JSON object with the job title, experience status and category or 'unclear'.",
           {
             instructions: `
@@ -641,8 +652,8 @@ const analyseIncompleteApplications = createStep({
         if (
           !hasCoverLetter ||
           !hasResume ||
-          generatedResult.job_title === "unclear" ||
-          !generatedResult.job_title
+          generatedResult?.job_title === "unclear" ||
+          !generatedResult?.job_title
         ) {
           incompleteApplicationsData.push({
             ...emailMetaData,
@@ -1029,18 +1040,18 @@ const trackReplyMailsWorkflow = createWorkflow({
   // .then(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
   .then(sortReplyEmails)
-// .branch([
-//   [
-//     async ({ inputData: { applicants } }) => applicants.length > 0,
-//     analyseApplicants,
-//   ],
-//   [
-//     async ({ inputData: { incompleteApplications } }) =>
-//       incompleteApplications.length > 0,
-//     analyseIncompleteApplications,
-//   ],
-// ])
-// .then(mergeResults)
+  .branch([
+    [
+      async ({ inputData: { applicants } }) => applicants.length > 0,
+      analyseApplicants,
+    ],
+    [
+      async ({ inputData: { incompleteApplications } }) =>
+        incompleteApplications.length > 0,
+      analyseIncompleteApplications,
+    ],
+  ])
+  .then(mergeResults);
 // .branch([
 //   [
 //     async ({ inputData: { applicantsWithKeys } }) =>

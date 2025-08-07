@@ -21,7 +21,13 @@ interface EmailData {
   bccEmail?: string;
 }
 
-const gmailClient = await getGmailClient("hi@ocode.co");
+  const recruitmentMail = process.env.RECRUITMENT_MAIL || "hi@ocode.co";
+  
+  if (!recruitmentMail) {
+    throw new Error("RECRUITMENT_MAIL environment variable is not set");
+  }
+
+const gmailClient = await getGmailClient(recruitmentMail);
 
 const resolveLabelIds = async (labels: string[]) => {
   const existingLabels = await gmailClient.users.labels.list({
@@ -221,10 +227,7 @@ export const sendEmail = async ({
   if (typeof threadId !== "string" || threadId.trim() === "") {
     throw new Error("Invalid threadId");
   }
-  const recruitmentMail = process.env.RECRUITMENT_MAIL;
-  if (!recruitmentMail) {
-    throw new Error("RECRUITMENT_MAIL environment variable is not set");
-  }
+
 
   try {
     if (rawMessage) {

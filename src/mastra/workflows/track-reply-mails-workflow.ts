@@ -2,6 +2,7 @@ import { createStep, createWorkflow } from "@mastra/core";
 import z from "zod";
 import {
   containsKeyword,
+  getAttachment,
   getEmailContent,
   getLabelNames,
   getThreadMessages,
@@ -15,7 +16,13 @@ import {
   extractJsonFromResult,
 } from "./recruitment-pre-stage-workflow";
 import { decodeEmailBody } from "../../utils/gmail";
-import { extractDetailedCandidateInfo } from "../../utils/emailUtils";
+import {
+  extractDetailedCandidateInfo,
+  extractTextFromAttachment,
+  extractTextFromDOCX,
+  extractTextFromPDF,
+  fastParseEmail,
+} from "../../utils/emailUtils";
 
 interface ApplicantKeyDetails {
   position: string;
@@ -327,22 +334,6 @@ const analyseApplicantsOutput = z.object({
       currentCTC: z.string(),
       expectedCTC: z.string(),
       workExp: z.string(),
-      interviewTime: z.string(),
-      location: z.string(),
-      agreement: z.string(),
-      education: z.string().optional(),
-      contact: z.string().optional(),
-      linkedIn: z.string().optional(),
-      facebook: z.string().optional(),
-      callTime: z.string().optional(),
-      resume: z.string().optional(),
-
-      lastAppraisal: z.string().optional(),
-      switchingReason: z.string().optional(),
-      totalWorkExp: z.string().optional(),
-      currLoc: z.string().optional(),
-      github: z.string().optional(),
-      stackOverflow: z.string().optional(),
     })
     .optional(),
 });
@@ -370,7 +361,9 @@ const analyseApplicants = createStep({
 
       const agent = mastra.getAgent("contextQAAgent");
 
-      if (!agent) throw Error("ContextQA Agent not found");
+      if (!agent) {
+        throw Error("ContextQA Agent not found at analyse-applicants step");
+      }
 
       const emailMetaData: z.infer<typeof analyseApplicantsOutput> = {
         id: mail.id || "",
@@ -383,49 +376,70 @@ const analyseApplicants = createStep({
         body: mail.body,
       };
 
+      const message = await getEmailContent(mail.id);
+
+      const attachmentIds =
+        message.payload?.parts
+          ?.filter((p) => p.body?.attachmentId)
+          .map((p) => p.body?.attachmentId) || [];
+
+      let attachmentContent = "";
+
+      for (let attachmentId of attachmentIds) {
+        if (!attachmentId) continue;
+        const attachmentData = await getAttachment(attachmentId);
+        attachmentContent += attachmentData;
+      }
+
+      const fastExtractedDetails = extractDetailedCandidateInfo(
+        mail.subject,
+        mail.body,
+        attachmentContent
+      );
+
+      const missingKeyDetails = fastExtractedDetails
+        ? Object.entries(fastExtractedDetails).some(([key, value]) => {
+            const requiredFields = [
+              "position",
+              "currentCTC",
+              "expectedCTC",
+              "workExp",
+            ];
+            return requiredFields.includes(key) && value === "unclear";
+          })
+        : true; 
+
+      if (!missingKeyDetails && fastExtractedDetails) {
+        emailMetaData.keyDetails = fastExtractedDetails;
+        console.log("Fast extracted details", fastExtractedDetails);
+        new Promise((resolve) => setTimeout(resolve, 1000));
+        applicantsData.push(emailMetaData);
+        continue;
+      }
+
       try {
-        const extractedDetails = extractDetailedCandidateInfo(
-          mail.subject,
-          mail.body
+        const result = await agent.generate(
+          `Extract key details from the following email body:\n\n${mail.body}`,
+          {
+            instructions: `
+        You are an AI agent tasked with analyzing email bodies and extracting specific key details.
+
+        Required fields: Always include these in the output JSON, even if the value is "N/A" (Not Applicable) or "unclear" (ambiguous).
+        - position: string
+        - currentCTC: string
+        - expectedCTC: string
+        - workExp: string
+       
+
+        Return the result as a JSON object with the required fields that are present in the email body.
+            `,
+            maxSteps: 20,
+            maxTokens: 1000,
+          }
         );
-        //         const result = await agent.generate(
-        //           `Extract key details from the following email body:\n\n${mail.body}`,
-        //           {
-        //             instructions: `
-        // You are an AI agent tasked with analyzing email bodies and extracting specific key details.
-
-        // Required fields: Always include these in the output JSON, even if the value is "N/A" (Not Applicable) or "unclear" (ambiguous).
-        // - position: string
-        // - currentCTC: string
-        // - expectedCTC: string
-        // - workExp: string
-        // - interviewTime: string
-        // - location: string
-        // - agreement: string
-
-        // Optional fields: Only include these in the output JSON if they are mentioned in the email body. If mentioned but the value is not clear, set to "unclear". If mentioned but the value is missing, set to "Not Provided". If not mentioned at all, omit the field from the output.
-        // - education
-        // - contact
-        // - linkedIn
-        // - facebook
-        // - callTime
-        // - resume
-        // - lastAppraisal
-        // - switchingReason
-        // - totalWorkExp
-        // - currLoc
-        // - github
-        // - stackOverflow
-
-        // Return the result as a JSON object with the required fields and any optional fields that are present in the email body.
-        //     `,
-        //             maxSteps: 20,
-        //             maxTokens: 1000,
-        //           }
-        //         );
-        //         const extractedDetails: ApplicantKeyDetails = extractJsonFromResult(
-        //           result.text
-        //         );
+        const extractedDetails: ApplicantKeyDetails = extractJsonFromResult(
+          result.text
+        );
 
         const missingKeyDetails = extractedDetails
           ? Object.values(extractedDetails).some(
@@ -519,33 +533,89 @@ const analyseIncompleteApplications = createStep({
         containsKeyword({
           text: mail.body,
           keywords: [
+            // classic openers / closers
             "cover letter",
-            "job application",
-            "work experience",
-            "skills",
-            "education",
-            "summary",
-            "objective",
-            "responsibilities",
-            "keen interest",
-            "strong background",
-            "software development",
-            "contribute positively",
-            "scalable web applications",
-            "optimizing database performance",
-            "highly motivated",
-            "detail-oriented",
-            "achieving excellence",
-            "qualifications",
             "dear hiring manager",
+            "dear sir or madam",
+            "dear team",
+            "dear recruiter",
+            "dear [company]",
+            "i am writing to",
             "i am excited to apply",
+            "i am reaching out",
+            "i am interested in",
             "thank you for considering",
-            "my current role",
-            "your team",
+            "thank you for your time",
+            "sincerely yours",
+            "best regards",
+
+            // self-introduction / intent
+            "with x years of experience",
+            "with hands-on experience in",
+            "i bring to the table",
+            "i offer",
+            "i am eager to",
+            "i am passionate about",
+            "i am confident that",
+            "i would love the opportunity",
+            "i am looking forward to",
+            "contribute to your team",
+            "add value to your organization",
+            "aligns with my career goals",
+
+            // skill highlights
+            "proficient in",
+            "expertise in",
+            "skilled at",
+            "experience working with",
+            "experience includes",
+            "hands-on knowledge of",
+            "demonstrated ability in",
+            "proven track record",
+            "strong background in",
+            "solid understanding of",
+
+            // achievements & impact
+            "improved",
+            "increased",
+            "reduced",
+            "achieved",
+            "delivered",
+            "optimized",
+            "enhanced",
+            "streamlined",
+            "boosted",
+            "spearheaded",
+            "led the development",
+            "successfully launched",
+            "production-ready apps",
+            "real-world projects",
+
+            // soft skills
+            "team-oriented",
+            "detail-oriented",
+            "self-motivated",
+            "fast learner",
+            "adaptable",
+            "collaborative",
+            "multitask",
+            "problem-solving",
+            "critical thinking",
+            "communication skills",
+
+            // company-centric phrases
+            "your company’s mission",
+            "your innovative projects",
+            "your dynamic environment",
+            "your development team",
+            "your engineering culture",
+            "your product roadmap",
+            "your commitment to excellence",
           ],
         }) &&
         mail.body.length >= 300 &&
         mail.body.trim().split(/\s+/).length >= 50;
+
       const hasResume =
         attachmentId?.length && attachment_filename?.length
           ? containsKeyword({
@@ -598,49 +668,81 @@ const analyseIncompleteApplications = createStep({
         continue;
       }
 
-      // --------------------------------------------------------------------
-      // Job position extraction
+      const potentialJobTitle = mail.body
+        .split("Job Opening:")
+        .splice(1)
+        .join(" ")
+        .split("[")[0];
+
+      const fastResult = fastParseEmail(mail.subject, mail.body);
+
+      if (
+        fastResult &&
+        Object.keys(fastResult).length > 0 &&
+        fastResult.category &&
+        fastResult.category !== "unclear"
+      ) {
+        applicantsData.push({
+          ...emailMetaData,
+          job_title:
+            fastResult?.job_title.trim() ?? potentialJobTitle ?? "unclear",
+          category: fastResult.category || "unclear",
+          experience_status: fastResult.experience_status || "unclear",
+        });
+        continue;
+      }
 
       try {
         const agent = mastra.getAgent("contextQAAgent");
 
+        if (!agent) {
+          throw new Error(
+            "contextQAAgent not found at analyseIncompleteApplications step"
+          );
+        }
+
         const result = await agent.generate(
-          "Analyze the email subject, body and application to determine the most likely job title the candidate is applying for, experience status and category. Output only a JSON object with the job title, experience status and category or 'unclear'.",
+          "Extract job application details from emails with varying structures",
           {
             instructions: `
-      You are given the subject and body of a job application email. Your task is to determine the most likely job title the candidate is applying for, experience status and category.
-      - Use explicit mentions, strong contextual clues, and careful reasoning to infer the job title, experience status and category.
-      - Only infer a job title if there is clear, unambiguous evidence in the subject or body (such as direct statements, repeated references, or a clear match between skills/experience and a standard job title).
-      - Do not guess or invent job titles that are not clearly supported by the content.
-      - Do not use any tools, functions, or API calls. Only analyze the provided subject and body.
-      - Normalize job titles to standard forms (e.g., "Full Stack Web Developer" and "Full Stack Developer" are equivalent).
-      - If multiple job titles are possible, return the one most strongly indicated by the content.
-      - If no job title can be reasonably and confidently inferred, return 'unclear'.
-      - Determine the category based on the job title and body of the email. If unsure, return 'unclear'.
-      - The category can be one of the following values: Developer, Web Designer, Recruiter, Sales / Marketing
-      - Output only a JSON object in the following format: {"job_title": "<job title or 'unclear'>", "experience_status": "<fresher or experienced or 'unclear'>", "category": "<Developer or Web Designer or Recruiter or Sales / Marketing or 'unclear'>"}
-      Examples:
-      Subject: "Applying for full stack developer"
-      Body: "I am writing to express my interest in the Full Stack Web Developer role. My background in both front-end and back-end development positions me to contribute effectively to your team."
-      Output: {"job_title": "Full Stack Developer", "experience_status": "experienced", "category": "Developer"}
+You are a job-application parser.  
+Input variables:  
+- SUBJECT: ${mail.subject?.trim()}  
+- BODY: ${mail.body.trim()}  
+- HINT_TITLE: ${potentialJobTitle ? `'${potentialJobTitle}'` : "None"}
 
-      Subject: "Application for Web Designer"
-      Body: "I am interested in the Web Designer role."
-      Output: {"job_title": "Web Designer", "experience_status": "unclear", "category": "Web Designer"}
+Return **only** valid JSON:  
+{ "job_title": "<title>", "experience_status": "<status>", "category": "<category>" }
 
-      Subject: "Application for Recruiter Position"
-      Body: "I am writing to express my interest in a position at your company. My experience is in recruitment."
-      Output: {"job_title": "Recruiter", "experience_status": "unclear", "category": "Recruiter"}
+1. JOB_TITLE  
+   a. Patterns (stop at first hit):  
+      • ^Application for (.+?)(?:\\s*\\(|\\s*Role|$)  
+      • New application received for the position of (.+?)(?:\\s*\\[|\\s*at|$)  
+      • Job Opening: (.+?)(?:\\s*\\[|\\s*at|$)  
+      • applying for the (.+?) role|position  
+      • interest in any suitable (.+?) opportunities  
+   b. Clean: trim; drop everything from '(' or '[' onward.  
+   c. Fallback: if no match →  
+      • extract last word before "developer", "engineer", "programmer", "designer", etc.  
+      • else use HINT_TITLE if it appears verbatim in body.  
 
-      Subject: "Job application"
-      Body: "I am writing to express my interest in a position at your company. My experience is in sales and marketing."
-      Output: {"job_title": "Sales / Marketing", "experience_status": "unclear", "category": "Sales / Marketing"}
+2. EXPERIENCE_STATUS  
+   • "experienced" if regex matches:  
+     \\b(?:\\d+(?:\\.\\d+)?)\\s*(?:\\+|years?)\\b  OR  \\bbuilt \\d+ apps?\\b  OR  \\bthroughout my career\\b  
+   • "fresher" if “recent graduate”, “intern”, “entry-level” appear and no numeric years.  
+   • else "unclear".
 
-      Subject: ${mail.subject}
-      Body: ${mail.body}
-    `,
+3. CATEGORY  
+   • "Developer" if title OR body contains: developer, engineer, programmer, flutter, react, backend, frontend, full-stack, node, laravel, php, mobile, app, software.  
+   • "Web Designer" for designer, ui/ux, web design.  
+   • "Recruiter" for recruiter, hr, talent acquisition.  
+   • "Sales/Marketing" for sales, marketing, business development.  
+   • else "unclear".
+
+Return **only** the JSON object—no explanation.
+`,
             maxSteps: 10,
-            maxTokens: 50,
+            maxTokens: 100,
           }
         );
         const generatedResult: {
@@ -663,6 +765,7 @@ const analyseIncompleteApplications = createStep({
             experience_status: generatedResult?.experience_status || "unclear",
             category: generatedResult?.category || "unclear",
           });
+          continue;
         } else {
           applicantsData.push({
             ...emailMetaData,
@@ -672,6 +775,7 @@ const analyseIncompleteApplications = createStep({
             experience_status: generatedResult.experience_status || "unclear",
             category: generatedResult.category || "unclear",
           });
+          continue;
         }
       } catch (err) {
         console.log("error occured while extracting job title", err);
@@ -763,9 +867,190 @@ const migrateApplicantsWithKeyDetails = createStep({
     incompleteApplicationsData: z.array(analyseApplicantionOutput),
   }),
   outputSchema: z.string().describe("Final output of the recruitment workflow"),
-  execute: async ({ inputData: { applicantsWithKeys } }) => {
+  execute: async ({ inputData: { applicantsWithKeys }, mastra }) => {
     for (let mail of applicantsWithKeys) {
       if (!mail.userEmail) continue;
+
+      const keyDetails = mail.keyDetails;
+      if (!keyDetails || Object.values(keyDetails).some((v) => !v)) continue;
+
+      const agent = mastra.getAgent("contextQAAgent");
+
+      if (!agent) {
+        throw new Error(
+          "Agent not found at migrateApplicantsWithKeyDetails step"
+        );
+      }
+
+      const threadMessages = await getThreadMessages(mail.threadId);
+
+      if (!threadMessages || !threadMessages.length) continue;
+
+      let resumeAttachment = null;
+
+      for (const message of threadMessages) {
+        const attachmentIds = (message.payload?.parts || [])
+          .filter((p) =>
+            containsKeyword({
+              text: p.filename || "",
+              keywords: ["resume", "Resume", "cv", "CV"],
+            })
+          )
+          .map((p) => ({
+            id: p.body?.attachmentId,
+            filename: p.filename,
+          }));
+
+        console.log("attachmentIds", attachmentIds);
+        for (const { id, filename } of attachmentIds) {
+          if (!id || !filename) continue;
+          try {
+            const attachment = await getAttachment(id);
+            resumeAttachment = {
+              filename,
+              attachment: attachment.data,
+            };
+            break;
+          } catch (err) {
+            console.error("Error getting attachment", err);
+          }
+        }
+
+        if (resumeAttachment) break;
+      }
+
+      if (!resumeAttachment || !resumeAttachment.attachment) {
+        console.log("No resume attachment found", resumeAttachment);
+        continue;
+      }
+
+      let parsedResumeContent = null;
+
+      const testparsingResumeContent = await extractTextFromAttachment({
+        filename: resumeAttachment.filename,
+        attachment: resumeAttachment.attachment,
+      });
+
+      console.log("testparsingResumeContent", testparsingResumeContent);
+
+      // if (
+      //   resumeAttachment.filename.includes(".pdf") &&
+      //   resumeAttachment.attachment
+      // ) {
+      //   // For PDF attachments
+      //   const base64String = resumeAttachment.attachment;
+      //   const buffer = Buffer.from(
+      //     base64String.replace(/-/g, "+").replace(/_/g, "/") +
+      //       "=".repeat((4 - (base64String.length % 4)) % 4),
+      //     "base64"
+      //   );
+      //   console.log("resume pdf detected", resumeAttachment.filename);
+      //   parsedResumeContent = await extractTextFromPDF(buffer);
+      //   console.log(
+      //     "Resume content parsed via PDF function:",
+      //     parsedResumeContent
+      //   );
+
+      //   continue;
+      // } else if (
+      //   (resumeAttachment.filename.includes(".doc") ||
+      //     resumeAttachment.filename.includes(".docx")) &&
+      //   resumeAttachment.attachment
+      // ) {
+      //   // For DOCX attachments
+      //   const base64Data = resumeAttachment.attachment
+      //     .replace(/-/g, "+")
+      //     .replace(/_/g, "/");
+      //   const padding = "=".repeat((4 - (base64Data.length % 4)) % 4);
+      //   const base64WithPadding = base64Data + padding;
+      //   const docBinary = Buffer.from(base64WithPadding, "base64");
+      //   parsedResumeContent = await extractTextFromDOCX(docBinary);
+      // } else {
+      //   console.log("Unable to parse resume, skipping this mail");
+      //   continue;
+      // }
+
+      // if (!parsedResumeContent) {
+      //   console.log("Unable to parse resume, skipping this mail");
+      //   continue;
+      // }
+
+      // console.log("Resume content:", parsedResumeContent);
+
+      //     try {
+      //       const resumeText = parsedResumeContent;
+      //       const currentCTC = keyDetails.currentCTC;
+      //       const expectedCTC = keyDetails.expectedCTC;
+      //       const jobPosition = keyDetails.position;
+      //       const workExperience = keyDetails.workExp;
+
+      //       const result = await agent.generate(
+      //         `Resume Text: ${resumeText}
+
+      //  Candidate Details:
+      //  - Current CTC: ${currentCTC}
+      //  - Expected CTC: ${expectedCTC}
+      //  - Job Position Applying For: ${jobPosition}
+      //  - Work Experience: ${workExperience}
+
+      //  Analyze the candidate profile and generate interview questions as per the instructions.`,
+      //         {
+      //           instructions: `You are an AI recruitment assistant that must return ONLY a valid JSON response with no additional text.
+
+      //   Process:
+      //   1. Evaluate provided key details:
+      //      - Check if currentCTC, expectedCTC, jobPosition, and workExperience are meaningful
+      //      - Consider values as UNMEANINGFUL if: null, undefined, empty string, "N/A", "NA", "na", "n/a", or similar placeholders
+      //      - For any UNMEANINGFUL values, extract the information from the resume text instead
+
+      //   2. Use the job position (either provided or extracted from resume) to search the vector database for current openings
+
+      //   3. If no matching opening found, return JSON with "jobOpeningFound": false
+
+      //   4. If opening found:
+      //      a. Extract key details from:
+      //         - Provided candidate details (if meaningful)
+      //         - Resume text (for any unmeaningful provided details or additional context)
+      //         - Focus on:
+      //           * Technical skills and proficiency levels
+      //           * Project experience with relevant technologies
+      //           * Work history including roles, responsibilities, and achievements
+      //           * Current CTC and expected CTC (from provided details or resume)
+      //           * Educational background and certifications
+      //      b. Compare candidate qualifications against the retrieved job requirements
+      //      c. Generate 5-8 pre-round interview questions based on:
+      //         - Candidate's skills and experience from resume
+      //         - Requirements from matched job description
+      //         - No hallucinated content - only use information from resume and retrieved job description
+
+      //   Output Schema (guaranteed JSON response):
+      //   {
+      //     "jobOpeningFound": boolean,
+      //     "jobTitle": string,
+      //     "jobDescription": string,
+      //     "interviewQuestions": [string]
+      //   }
+
+      //   Rules:
+      //   - If no job opening: jobOpeningFound=false, jobTitle="", jobDescription="", interviewQuestions=[]
+      //   - If job found: jobOpeningFound=true, populate all fields
+      //   - Interview questions must be specific to the job position and candidate's profile
+      //   - Never add explanations outside the JSON
+      //   - Never hallucinate job details or candidate experiences
+      //   - Questions should cover technical skills, project experience, problem-solving, and role-specific knowledge
+      //   - Prioritize provided key details when meaningful, otherwise extract from resume text`,
+      //           maxSteps: 10,
+      //           maxTokens: 1000,
+      //         }
+      //       );
+
+      //       console.log(
+      //         "result of ai screening of candidate profile:",
+      //         result.text
+      //       );
+      //     } catch (err) {
+      //       console.log("error occured while extracting job title", err);
+      //     }
 
       // const applicationCategory = mail.keyDetails?.position
       //   ? `${mail.keyDetails?.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
@@ -785,8 +1070,6 @@ const migrateApplicantsWithKeyDetails = createStep({
       //     "INCOMPLETE_APPLICATIONS",
       //   ],
       // });
-
-      console.log("mail with key details", mail);
     }
 
     return "applicants with key details migrated successfully";
@@ -839,101 +1122,103 @@ const migrateConfirmedApplicants = createStep({
     for (let mail of applicantsData) {
       if (!mail.userEmail) continue;
 
-      const applicationCategory =
-        mail.category !== "unclear" && mail.category
-          ? mail.category
-          : "Unclear Applications";
+      console.log("mail with all details in pre stage reply mail", mail);
 
-      switch (mail.category) {
-        case "Developer":
-          const templateId =
-            mail.experience_status === "experienced"
-              ? "templates-request_key_details-developer-experienced"
-              : mail.experience_status === "fresher"
-                ? "templates-request_key_details-developer-fresher"
-                : null;
+      // const applicationCategory =
+      //   mail.category !== "unclear" && mail.category
+      //     ? mail.category
+      //     : "Unclear Applications";
 
-          if (!templateId || !mail.job_title || mail.job_title === "unclear") {
-            await modifyEmailLabels({
-              emailId: mail.id,
-              addLabelIds: ["Unclear Applications"],
-              removeLabelIds: ["Pre-Stage"],
-            });
-            continue;
-          }
+      // switch (mail.category) {
+      //   case "Developer":
+      //     const templateId =
+      //       mail.experience_status === "experienced"
+      //         ? "templates-request_key_details-developer-experienced"
+      //         : mail.experience_status === "fresher"
+      //           ? "templates-request_key_details-developer-fresher"
+      //           : null;
 
-          await sendThreadReplyEmail({
-            name: mail.name || "",
-            position: mail.job_title || "unclear",
-            userEmail: mail.userEmail,
-            subject: mail.subject,
-            threadId: mail.threadId,
-            emailId: mail.id,
-            inReplyTo: mail.messageId,
-            references: [mail.messageId],
-            templateId: templateId,
-            addLabelIds: [applicationCategory, "Stage1 Interview"],
-            removeLabelIds: ["Pre-Stage"],
-          });
+      //     if (!templateId || !mail.job_title || mail.job_title === "unclear") {
+      //       await modifyEmailLabels({
+      //         emailId: mail.id,
+      //         addLabelIds: ["Unclear Applications"],
+      //         removeLabelIds: ["Pre-Stage"],
+      //       });
+      //       continue;
+      //     }
 
-          break;
+      //     await sendThreadReplyEmail({
+      //       name: mail.name || "",
+      //       position: mail.job_title || "unclear",
+      //       userEmail: mail.userEmail,
+      //       subject: mail.subject,
+      //       threadId: mail.threadId,
+      //       emailId: mail.id,
+      //       inReplyTo: mail.messageId,
+      //       references: [mail.messageId],
+      //       templateId: templateId,
+      //       addLabelIds: [applicationCategory, "Stage1 Interview"],
+      //       removeLabelIds: ["Pre-Stage"],
+      //     });
 
-        case "Recruiter":
-          await sendThreadReplyEmail({
-            name: mail.name || "",
-            position: mail.job_title || "unclear",
-            userEmail: mail.userEmail,
-            subject: mail.subject,
-            threadId: mail.threadId,
-            emailId: mail.id,
-            inReplyTo: mail.messageId,
-            references: [mail.messageId],
-            templateId: "templates-request_key_details-non-tech",
-            addLabelIds: [applicationCategory, "Stage1 Interview"],
-            removeLabelIds: ["Pre-Stage"],
-          });
-          break;
+      //     break;
 
-        case "Sales / Marketing":
-          await sendThreadReplyEmail({
-            name: mail.name || "",
-            position: mail.job_title || "unclear",
-            userEmail: mail.userEmail,
-            subject: mail.subject,
-            threadId: mail.threadId,
-            emailId: mail.id,
-            inReplyTo: mail.messageId,
-            references: [mail.messageId],
-            templateId: "templates-request_key_details-non-tech",
-            addLabelIds: [applicationCategory, "Stage1 Interview"],
-            removeLabelIds: ["Pre-Stage"],
-          });
-          break;
+      //   case "Recruiter":
+      //     await sendThreadReplyEmail({
+      //       name: mail.name || "",
+      //       position: mail.job_title || "unclear",
+      //       userEmail: mail.userEmail,
+      //       subject: mail.subject,
+      //       threadId: mail.threadId,
+      //       emailId: mail.id,
+      //       inReplyTo: mail.messageId,
+      //       references: [mail.messageId],
+      //       templateId: "templates-request_key_details-non-tech",
+      //       addLabelIds: [applicationCategory, "Stage1 Interview"],
+      //       removeLabelIds: ["Pre-Stage"],
+      //     });
+      //     break;
 
-        case "CREATIVE":
-          await sendThreadReplyEmail({
-            name: mail.name || "",
-            position: mail.job_title || "unclear",
-            userEmail: mail.userEmail,
-            subject: mail.subject,
-            threadId: mail.threadId,
-            emailId: mail.id,
-            inReplyTo: mail.messageId,
-            references: [mail.messageId],
-            templateId: "templates-request_key_details-creative",
-            addLabelIds: [applicationCategory, "Stage1 Interview"],
-            removeLabelIds: ["Pre-Stage"],
-          });
-          break;
+      //   case "Sales / Marketing":
+      //     await sendThreadReplyEmail({
+      //       name: mail.name || "",
+      //       position: mail.job_title || "unclear",
+      //       userEmail: mail.userEmail,
+      //       subject: mail.subject,
+      //       threadId: mail.threadId,
+      //       emailId: mail.id,
+      //       inReplyTo: mail.messageId,
+      //       references: [mail.messageId],
+      //       templateId: "templates-request_key_details-non-tech",
+      //       addLabelIds: [applicationCategory, "Stage1 Interview"],
+      //       removeLabelIds: ["Pre-Stage"],
+      //     });
+      //     break;
 
-        default:
-          await modifyEmailLabels({
-            emailId: mail.id,
-            addLabelIds: ["Unclear Applications"],
-            removeLabelIds: ["Pre-Stage"],
-          });
-          break;
-      }
+      //   case "CREATIVE":
+      //     await sendThreadReplyEmail({
+      //       name: mail.name || "",
+      //       position: mail.job_title || "unclear",
+      //       userEmail: mail.userEmail,
+      //       subject: mail.subject,
+      //       threadId: mail.threadId,
+      //       emailId: mail.id,
+      //       inReplyTo: mail.messageId,
+      //       references: [mail.messageId],
+      //       templateId: "templates-request_key_details-creative",
+      //       addLabelIds: [applicationCategory, "Stage1 Interview"],
+      //       removeLabelIds: ["Pre-Stage"],
+      //     });
+      //     break;
+
+      //   default:
+      //     await modifyEmailLabels({
+      //       emailId: mail.id,
+      //       addLabelIds: ["Unclear Applications"],
+      //       removeLabelIds: ["Pre-Stage"],
+      //     });
+      //     break;
+      // }
     }
 
     return "applicants confirmed and migrated";
@@ -963,64 +1248,104 @@ const informToReApply = createStep({
         unclearPosition,
       ].filter(Boolean).length;
 
-      if (missingDetailsCount > 1) {
-        await sendThreadReplyEmail({
-          name: mail.name || "",
-          position: mail.job_title || "unclear",
-          userEmail: mail.userEmail,
-          subject: mail.subject,
-          threadId: mail.threadId,
-          emailId: mail.id,
-          inReplyTo: mail.messageId,
-          references: [mail.messageId],
-          templateId: "templates-rejection-missing_multiple_details",
-          addLabelIds: ["Pre-Stage"],
-        });
-      } else if (missingResume) {
-        await sendThreadReplyEmail({
-          name: mail.name || "",
-          position: mail.job_title || "unclear",
-          userEmail: mail.userEmail,
-          subject: mail.subject,
-          threadId: mail.threadId,
-          emailId: mail.id,
-          inReplyTo: mail.messageId,
-          references: [mail.messageId],
-          templateId: "templates-rejection-no_resume",
-          addLabelIds: ["Pre-Stage"],
-        });
-      } else if (missingCoverLetter) {
-        await sendThreadReplyEmail({
-          name: mail.name || "",
-          position: mail.job_title || "unclear",
-          userEmail: mail.userEmail,
-          subject: mail.subject,
-          threadId: mail.threadId,
-          emailId: mail.id,
-          inReplyTo: mail.messageId,
-          references: [mail.messageId],
-          templateId: "templates-rejection-no_cover_letter",
-          addLabelIds: ["Pre-Stage"],
-        });
-      } else if (unclearPosition) {
-        await sendThreadReplyEmail({
-          name: mail.name || "",
-          position: mail.job_title || "unclear",
-          userEmail: mail.userEmail,
-          subject: mail.subject,
-          threadId: mail.threadId,
-          emailId: mail.id,
-          inReplyTo: mail.messageId,
-          references: [mail.messageId],
-          templateId: "templates-rejection-no_clear_job_position",
-          addLabelIds: ["Pre-Stage"],
-        });
-      } else {
-        continue;
-      }
+      console.log(
+        "application with missing details in pre stage workflow",
+        mail
+      );
+      console.log("missingDetailsCount", missingDetailsCount);
+
+      // if (missingDetailsCount > 1) {
+      //   await sendThreadReplyEmail({
+      //     name: mail.name || "",
+      //     position: mail.job_title || "unclear",
+      //     userEmail: mail.userEmail,
+      //     subject: mail.subject,
+      //     threadId: mail.threadId,
+      //     emailId: mail.id,
+      //     inReplyTo: mail.messageId,
+      //     references: [mail.messageId],
+      //     templateId: "templates-rejection-missing_multiple_details",
+      //     addLabelIds: ["Pre-Stage"],
+      //   });
+      // } else if (missingResume) {
+      //   await sendThreadReplyEmail({
+      //     name: mail.name || "",
+      //     position: mail.job_title || "unclear",
+      //     userEmail: mail.userEmail,
+      //     subject: mail.subject,
+      //     threadId: mail.threadId,
+      //     emailId: mail.id,
+      //     inReplyTo: mail.messageId,
+      //     references: [mail.messageId],
+      //     templateId: "templates-rejection-no_resume",
+      //     addLabelIds: ["Pre-Stage"],
+      //   });
+      // } else if (missingCoverLetter) {
+      //   await sendThreadReplyEmail({
+      //     name: mail.name || "",
+      //     position: mail.job_title || "unclear",
+      //     userEmail: mail.userEmail,
+      //     subject: mail.subject,
+      //     threadId: mail.threadId,
+      //     emailId: mail.id,
+      //     inReplyTo: mail.messageId,
+      //     references: [mail.messageId],
+      //     templateId: "templates-rejection-no_cover_letter",
+      //     addLabelIds: ["Pre-Stage"],
+      //   });
+      // } else if (unclearPosition) {
+      //   await sendThreadReplyEmail({
+      //     name: mail.name || "",
+      //     position: mail.job_title || "unclear",
+      //     userEmail: mail.userEmail,
+      //     subject: mail.subject,
+      //     threadId: mail.threadId,
+      //     emailId: mail.id,
+      //     inReplyTo: mail.messageId,
+      //     references: [mail.messageId],
+      //     templateId: "templates-rejection-no_clear_job_position",
+      //     addLabelIds: ["Pre-Stage"],
+      //   });
+      // } else {
+      //   continue;
+      // }
     }
 
     return "applicants rejected successfully and migrated to rejected applicants";
+  },
+});
+
+const markApplicationAsUnclear = createStep({
+  id: "mark-application-as-unclear",
+  description: "marks applications as unclear application in Gmail",
+  inputSchema: z.object({
+    applicantsWithKeys: z.array(analyseApplicantsOutput),
+    rejectedWithoutKeys: z.array(analyseApplicantsOutput),
+    applicantsData: z.array(analyseApplicantionOutput),
+    incompleteApplicationsData: z.array(analyseApplicantionOutput),
+  }),
+  outputSchema: z.string().describe("Final output of the recruitment workflow"),
+  execute: async ({ inputData: { rejectedWithoutKeys } }) => {
+    const mailsToMarkAsUnclear = rejectedWithoutKeys.filter(
+      (mail) => mail.id && mail.threadId
+    );
+
+    for (let mail of mailsToMarkAsUnclear) {
+      const existingLabels = mail.labels?.filter(
+        (label) =>
+          !["Inbox", "Unread", "ALL", "INBOX", "UNREAD"].includes(label) &&
+          label !== "Unclear Applications"
+      ) || ["Stage1 Interview"];
+
+      await modifyEmailLabels({
+        emailId: mail.id,
+        threadId: mail.threadId,
+        addLabelIds: ["Unclear Applications"],
+        removeLabelIds: existingLabels,
+      });
+    }
+
+    return "applicants marked as unclear";
   },
 });
 
@@ -1051,28 +1376,33 @@ const trackReplyMailsWorkflow = createWorkflow({
       analyseIncompleteApplications,
     ],
   ])
-  .then(mergeResults);
-// .branch([
-//   [
-//     async ({ inputData: { applicantsWithKeys } }) =>
-//       applicantsWithKeys.length > 0,
-//     migrateApplicantsWithKeyDetails,
-//   ],
-//   [
-//     async ({ inputData: { rejectedWithoutKeys } }) =>
-//       rejectedWithoutKeys.length > 0,
-//     informToResend,
-//   ],
-//   [
-//     async ({ inputData: { incompleteApplicationsData } }) =>
-//       incompleteApplicationsData.length > 0,
-//     informToReApply,
-//   ],
-//   [
-//     async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
-//     migrateConfirmedApplicants,
-//   ],
-// ]);
+  .then(mergeResults)
+  .branch([
+    [
+      async ({ inputData: { applicantsWithKeys } }) =>
+        applicantsWithKeys.length > 0,
+      migrateApplicantsWithKeyDetails,
+    ],
+    [
+      async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
+      migrateConfirmedApplicants,
+    ],
+    [
+      async ({ inputData: { rejectedWithoutKeys } }) =>
+        rejectedWithoutKeys.length > 0,
+      markApplicationAsUnclear,
+    ],
+    [
+      async ({ inputData: { incompleteApplicationsData } }) =>
+        incompleteApplicationsData.length > 0,
+      informToReApply,
+    ],
+    // [
+    //   async ({ inputData: { rejectedWithoutKeys } }) =>
+    //     rejectedWithoutKeys.length > 0,
+    //   informToResend,
+    // ],
+  ]);
 
 trackReplyMailsWorkflow.commit();
 

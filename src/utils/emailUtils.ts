@@ -1,3 +1,6 @@
+import { PdfReader } from "pdfreader";
+import mammoth from "mammoth";
+
 type FastParseResult = {
   job_title: string;
   experience_status: "experienced" | "fresher" | "unclear";
@@ -5,27 +8,23 @@ type FastParseResult = {
 } | null;
 
 export function fastParseEmail(subject: string, body: string): FastParseResult {
-  // Normalize text by replacing newlines and extra spaces
   const text = (subject + " " + body)
     .replace(/\r\n|\r|\n/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 
-  /* ---------- 1. Job title extraction ---------- */
   let jobTitle: string | null = null;
 
-  // Try subject line first (most reliable source)
   if (subject) {
-    // Subject-specific patterns
     const subjectPatterns = [
       /^Application for (.+?)(?:\s*\(|\s+Role|\s+Position|$)/i,
       /^New application received for the position of (.+?)(?:\s*\[|\s+at|$)/i,
       /^Job Opening: (.+?)(?:\s*\[|\s+at|$)/i,
       /^Applying for the (.+?)(?:\s+Role|\s+Position|$)/i,
       /^I'm interested in (.+?)(?:\s+Role|\s+Position|$)/i,
-      /^Applying for the post of (.+)$/i, // Pattern for this specific case
-      /^Application for (.+)$/i, // Fallback for simple subjects
+      /^Applying for the post of (.+)$/i,
+      /^Application for (.+)$/i,
     ];
 
     for (const pattern of subjectPatterns) {
@@ -36,28 +35,24 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
       }
     }
 
-    // Handle special separators in subject
     if (jobTitle && (jobTitle.includes("|") || jobTitle.includes("/"))) {
-      // Split by separators and take the most specific part (usually last)
       const parts = jobTitle.split(/[|/]/);
       jobTitle = parts[parts.length - 1].trim();
     }
 
-    // Clean up common prefixes and suffixes
     if (jobTitle) {
       jobTitle = jobTitle
-        .replace(/^post of\s+/i, "") // Remove "post of" prefix
-        .replace(/^position of\s+/i, "") // Remove "position of" prefix
-        .replace(/^frontend\s+/i, "") // Remove "Frontend" prefix if present
-        .replace(/\s+Position$/i, "") // Remove "Position" suffix
-        .replace(/\s+Role$/i, "") // Remove "Role" suffix
-        .replace(/\s+at\s+.+$/i, "") // Remove company name
-        .replace(/\s*\[.+\]$/, "") // Remove bracketed IDs
+        .replace(/^post of\s+/i, "")
+        .replace(/^position of\s+/i, "")
+        .replace(/^frontend\s+/i, "")
+        .replace(/\s+Position$/i, "")
+        .replace(/\s+Role$/i, "")
+        .replace(/\s+at\s+.+$/i, "")
+        .replace(/\s*\[.+\]$/, "")
         .trim();
     }
   }
 
-  // If subject didn't yield a title, try body
   if (!jobTitle && body) {
     const bodyPatterns = [
       /(?:I am writing to express my interest in|I am applying for|interest in) the (.+?)(?:\s+Role|\s+Position|$)/i,
@@ -74,7 +69,6 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     }
   }
 
-  // Fallback: Look for explicit job title mentions
   if (!jobTitle) {
     const jobTitlePhrases = [
       "as a (.+?)(?:\s+at|\s+for|\s+with|$)",
@@ -92,7 +86,6 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     }
   }
 
-  // Ultra fallback: Extract last occurrence of role keywords
   if (!jobTitle) {
     const roleKeywords = [
       "developer",
@@ -117,12 +110,10 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
 
   if (!jobTitle) return null;
 
-  /* ---------- 2. Experience status ---------- */
   let expStatus: "experienced" | "fresher" | "unclear" = "unclear";
 
-  // More comprehensive experience detection
   const experiencePatterns = [
-    /\b\d+(?:\.\d+)?\s*(?:\+?\s*years?|yrs?)\b/i, // "7.5 years", "2+ years"
+    /\b\d+(?:\.\d+)?\s*(?:\+?\s*years?|yrs?)\b/i,
     /\bwith\s+\d+(?:\.\d+)?\s*\+?\s*years?\s+of\s+experience\b/i,
     /\bover\s+\d+(?:\.\d+)?\s*years?\b/i,
     /\bbuilt\s+\d+\s+apps?\b/i,
@@ -148,13 +139,10 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     expStatus = "fresher";
   }
 
-  /* ---------- 3. Category ---------- */
   let category = "unclear";
 
-  // First, check if the job title itself contains category keywords
   const jobTitleLower = jobTitle.toLowerCase();
 
-  // Prioritize category detection to avoid misclassification
   const categoryKeywords = {
     Recruiter: ["recruiter", "hr", "talent acquisition", "it recruitment"],
     Developer: [
@@ -182,7 +170,6 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     "Sales/Marketing": ["sales", "marketing", "business development"],
   };
 
-  // Check job title first for category keywords
   for (const [cat, keywords] of Object.entries(categoryKeywords)) {
     if (keywords.some((k) => jobTitleLower.includes(k))) {
       category = cat;
@@ -190,7 +177,6 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     }
   }
 
-  // If category is still unclear, check the full text
   if (category === "unclear") {
     for (const [cat, keywords] of Object.entries(categoryKeywords)) {
       if (keywords.some((k) => text.includes(k))) {
@@ -200,7 +186,6 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
     }
   }
 
-  /* ---------- 4. Return ---------- */
   return {
     job_title: jobTitle.trim(),
     experience_status: expStatus,
@@ -213,150 +198,208 @@ interface DetailedCandidateInfo {
   currentCTC: string;
   expectedCTC: string;
   workExp: string;
-  interviewTime: string;
-  location: string;
-  agreement: string;
-  education?: string;
-  contact?: string;
-  linkedIn?: string;
-  facebook?: string;
-  callTime?: string;
-  resume?: string;
-  lastAppraisal?: string;
-  switchingReason?: string;
-  totalWorkExp?: string;
-  currLoc?: string;
-  github?: string;
-  stackOverflow?: string;
 }
 
 type DetailedParseResult = DetailedCandidateInfo | null;
 
 export function extractDetailedCandidateInfo(
   subject: string,
-  body: string
+  body: string,
+  attachmentContent?: string
 ): DetailedParseResult {
-  // Normalize text by replacing newlines, extra spaces, and special bullets
-  const text = (subject + " " + body)
+  // Normalize text by replacing newlines with spaces and normalize bullet points
+  const text = (subject + " " + body + " " + (attachmentContent || ""))
     .replace(/\r\n|\r|\n/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/[•*\-·]/g, "•") // Normalize all bullet characters to •
-    .trim()
-    .toLowerCase();
+    .trim();
 
-  // Helper function to extract field value
-  const extractField = (pattern: RegExp): string => {
-    const match = text.match(pattern);
-    return match && match[1] ? match[1].trim() : "N/A";
+  // Helper function to extract field value with multiple patterns
+  const extractField = (
+    patterns: RegExp[],
+    defaultValue = "unclear"
+  ): string => {
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const value = match[1].trim();
+        // Return defaultValue if empty string
+        return value === "" ? defaultValue : value;
+      }
+    }
+    return defaultValue;
   };
 
   /* ---------- 1. Position extraction ---------- */
-  let position: string = "N/A";
+  let position: string = "unclear";
+
+  // Try to extract from subject first
   if (subject) {
-    // Subject-specific patterns (updated to handle "Re:" prefix)
     const subjectPatterns = [
-      /^(?:Re:\s*)?Application for (.+?)(?:\s*\(|\s+Role|\s+Position|$)/i,
       /^(?:Re:\s*)?New application received for the position of (.+?)(?:\s+at\s+)/i,
-      /^(?:Re:\s*)?Job Opening: (.+?)(?:\s*\[|\s+at|$)/i,
-      /^(?:Re:\s*)?Applying for the (.+?)(?:\s+Role|\s+Position|$)/i,
-      /^(?:Re:\s*)?I'm interested in (.+?)(?:\s+Role|\s+Position|$)/i,
-      /^(?:Re:\s*)?Applying for the post of (.+)$/i,
-      /^(?:Re:\s*)?Application for (.+)$/i,
+      /^(?:Re:\s*)?Job Application\s+\|\s*(.+?)\s*\|/i,
     ];
 
     for (const pattern of subjectPatterns) {
       const match = subject.match(pattern);
       if (match) {
         position = match[1].trim();
+        // Clean up any parenthetical information
+        position = position.replace(/\s*\(.*?\)$/, "").trim();
         break;
       }
-    }
-
-    // Clean up common prefixes and suffixes
-    if (position !== "N/A") {
-      position = position
-        .replace(/^post of\s+/i, "")
-        .replace(/^position of\s+/i, "")
-        .replace(/^frontend\s+/i, "")
-        .replace(/\s+Position$/i, "")
-        .replace(/\s+Role$/i, "")
-        .replace(/\s+at\s+.+$/i, "")
-        .replace(/\s*\[.+\]$/, "")
-        .trim();
     }
   }
 
   // If subject didn't yield a position, try body
-  if (position === "N/A" && body) {
-    position = extractField(/•\s*position\s+applied\s+for:\s*([^•]+)/i);
+  if (position === "unclear") {
+    position = extractField([
+      // Bullet point format
+      /•\s*position\s+applied\s+for:\s*([^•]+)/i,
+      // Asterisk format
+      /\*Position\s+Applied\s+For\*:\s*([^*]+)/i,
+      // Simple format
+      /position\s*[:.]\s*([^•\n*]+)/i,
+    ]);
   }
 
   /* ---------- 2. Current CTC extraction ---------- */
-  const currentCTC = extractField(/•\s*current\s+ctc[^:]*:\s*([^•]+)/i);
+  const currentCTC = extractField([
+    // Bullet point format
+    /•\s*current\s+ctc[^:]*:\s*([^•]+)/i,
+    // Asterisk format
+    /\*Current\s+CTC\*:\s*([^*]+)/i,
+    // Simple format
+    /current\s+ctc\s*[:.]\s*([^•\n*]+)/i,
+  ]);
 
   /* ---------- 3. Expected CTC extraction ---------- */
-  const expectedCTC = extractField(/•\s*expected\s+ctc:\s*([^•]+)/i);
+  const expectedCTC = extractField([
+    // Bullet point format
+    /•\s*expected\s+ctc:\s*([^•]+)/i,
+    // Asterisk format
+    /\*Expected\s+CTC\*:\s*([^*]+)/i,
+    // Simple format
+    /expected\s+ctc\s*[:.]\s*([^•\n*]+)/i,
+  ]);
 
   /* ---------- 4. Work Experience extraction ---------- */
-  const workExp = extractField(
-    /•\s*total\s+relevant\s+work\s+experience:\s*([^•]+)/i
-  );
+  const workExp = extractField([
+    // Bullet point format
+    /•\s*total\s+(?:relevant\s+)?work\s+experience:\s*([^•]+)/i,
+    // Asterisk format
+    /\*Total\s+Relevant\s+Work\s+Experience\*:\s*([^*]+)/i,
+    // Simple format
+    /total\s+experience\s*[:.]\s*([^•\n*]+)/i,
+  ]);
 
-  /* ---------- 5. Interview Time extraction ---------- */
-  const interviewTime = extractField(
-    /•\s*probable\s+date\s*&\s+time\s+for\s+personal\s+interview:\s*([^•]+)/i
-  );
-
-  /* ---------- 6. Location extraction ---------- */
-  const location = extractField(/•\s*current\s+location:\s*([^•]+)/i);
-
-  /* ---------- 7. Agreement extraction ---------- */
-  const agreement = extractField(
-    /•\s*whether\s+ready\s+to\s+sign[^:]*:\s*([^•]+)/i
-  );
-
-  /* ---------- 8. Other fields extraction ---------- */
-  const education = extractField(
-    /•\s*highest\s+education\s+qualification:\s*([^•]+)/i
-  );
-  const contact = extractField(/•\s*verified\s+contact\s+number:\s*([^•]+)/i);
-  const linkedIn = extractField(/•\s*linkedin\s+profile:\s*([^•]+)/i);
-  const facebook = extractField(/•\s*facebook\s+profile:\s*([^•]+)/i);
-  const callTime = extractField(/•\s*best\s+time\s+to\s+call:\s*([^•]+)/i);
-  const resume = text.includes("resume")
-    ? "Attached"
-    : extractField(/•\s*resume:\s*([^•]+)/i);
-  const lastAppraisal = extractField(/•\s*last\s+appraisal[^:]*:\s*([^•]+)/i);
-  const switchingReason = extractField(
-    /•\s*the\s+reason\s+for\s+switching[^:]*:\s*([^•]+)/i
-  );
-  const github = extractField(/•\s*github\s+repository:\s*([^•]+)/i);
-  const stackOverflow = extractField(/•\s*stackoverflow\s+profile:\s*([^•]+)/i);
-
-  // Create result object
+  // Create result object with only the required fields
   const result: DetailedCandidateInfo = {
     position,
     currentCTC,
     expectedCTC,
     workExp,
-    interviewTime,
-    location,
-    agreement,
-    education,
-    contact,
-    linkedIn,
-    facebook,
-    callTime,
-    resume,
-    lastAppraisal,
-    switchingReason,
-    github,
-    stackOverflow,
   };
 
-  // Set duplicate fields
-  if (workExp !== "N/A") result.totalWorkExp = workExp;
-  if (location !== "N/A") result.currLoc = location;
-
   return result;
+}
+
+function formatResumeContent(text: string): string {
+  // Step 1: Remove all spaces between individual characters
+  let cleaned = text.replace(/(\S)\s(?=\S)/g, '$1');
+  
+  // Step 2: Fix punctuation spacing
+  cleaned = cleaned.replace(/\s+([.,;:!?)])/g, '$1');
+  cleaned = cleaned.replace(/([(])\s+/g, '$1');
+  
+  // Step 3: Add spaces after punctuation where needed
+  cleaned = cleaned.replace(/([.,;:!?])(?=[A-Z])/g, '$1 ');
+  
+  // Step 4: Add line breaks before all-caps section headers
+  cleaned = cleaned.replace(/([a-z.])([A-Z]{2,}(?:\s+[A-Z]{2,})*)/g, '$1\n\n$2');
+  
+  // Step 5: Add line breaks after dates
+  cleaned = cleaned.replace(/([A-Z][a-z]{2,} \d{4} - [A-Z][a-z]{2,} \d{4})(?=[A-Z])/g, '$1\n');
+  cleaned = cleaned.replace(/([A-Z][a-z]{2,} \d{4})(?=[A-Z])/g, '$1\n');
+  
+  // Step 6: Add line breaks after contact information
+  cleaned = cleaned.replace(/([\w.-]+@[\w.-]+\.\w+)(?=[A-Z])/g, '$1\n');
+  cleaned = cleaned.replace(/(\+\d{1,3}[-\s]?\d{10})(?=[A-Z])/g, '$1\n');
+  
+  // Step 7: Add line breaks after project titles
+  cleaned = cleaned.replace(/(\d{2,}\s*[A-Z]{2,}:)/g, '\n$1');
+  
+  // Step 8: Add line breaks after colons in section headers
+  cleaned = cleaned.replace(/(Languages|Awards|Activities|Programming|Database|Version|Web|Technologies|Achievement|Stream|Board|Key)(:)/gi, '$1$2\n');
+  
+  // Step 9: Clean up excessive line breaks
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+  
+  // Step 10: Add proper spacing after colons
+  cleaned = cleaned.replace(/:(?=[^\s])/g, ': ');
+  
+  // Step 11: Fix common capitalization issues
+  cleaned = cleaned.replace(/\b(b\.tech|c\+\+|sql|html|css|js|php|mysql|git|github|react\.js|spring boot)\b/gi, match => match.toUpperCase());
+  
+  // Step 12: Fix specific words that were incorrectly joined
+  cleaned = cleaned.replace(/Greenfield/g, 'Green field');
+  cleaned = cleaned.replace(/MySQL/g, 'My SQL');
+  cleaned = cleaned.replace(/SpringBoot/g, 'Spring Boot');
+  
+  // Step 13: Add line breaks before and after name (all caps followed by comma)
+  cleaned = cleaned.replace(/([A-Z]{2,} [A-Z]{2,},)/g, '\n$1\n');
+  
+  // Step 14: Fix contact info line
+  cleaned = cleaned.replace(/(\d+, .+?) \|/g, '$1\n|');
+  
+  return cleaned.trim();
+}
+
+
+export async function extractTextFromPDF(pdfBuffer: Buffer): Promise<string> {
+  try {
+    let text = "";
+    return new Promise((resolve, reject) => {
+      new PdfReader().parseBuffer(pdfBuffer, (err, item) => {
+        if (err) reject(err);
+        else if (!item) resolve(formatResumeContent(text));
+        else if (item.text) text += item.text + " ";
+      });
+    });
+  } catch (err) {
+    console.error("Error extracting text from PDF", err);
+    throw err;
+  }
+}
+
+export async function extractTextFromDOCX(buffer: Buffer): Promise<string> {
+  try {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
+  } catch (err) {
+    console.error("Error extracting text from DOCX", err);
+    throw err;
+  }
+}
+
+export async function extractTextFromAttachment({
+  filename,
+  attachment,
+}: {
+  filename: string;
+  attachment: string;
+}): Promise<string> {
+  const base64String = attachment.replace(/-/g, "+").replace(/_/g, "/");
+  const buffer = Buffer.from(
+    base64String + "=".repeat((4 - (base64String.length % 4)) % 4),
+    "base64"
+  );
+
+  if (filename.includes(".pdf")) {
+    return await extractTextFromPDF(buffer);
+  } else if (filename.includes(".doc") || filename.includes(".docx")) {
+    return await extractTextFromDOCX(buffer);
+  } else {
+    console.log("Unable to parse resume, skipping this mail");
+    return "";
+  }
 }

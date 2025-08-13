@@ -19,6 +19,7 @@ import {
   getThreadMessages,
   gmailSearchEmails,
 } from "../utils/gmail";
+import { debugWorkflow } from "./workflows/debug-workflow";
 
 const app = express();
 const port = process.env.NODE_PORT || 5000;
@@ -38,6 +39,7 @@ export const mastra = new Mastra({
     // current recruit workflow
     recruitmentPreStageWorkflow,
     trackReplyMailsWorkflow,
+    debugWorkflow
   },
   agents: {
     ragAgent,
@@ -145,7 +147,7 @@ const getInboxMails = async () => {
 
   console.table(
     inboxMails.sort(
-(a, b) =>
+      (a, b) =>
         new Date(b.date || "").getTime() - new Date(a.date || "").getTime()
     )
   );
@@ -264,10 +266,12 @@ const getLatestMsgByLabels = async () => {
       bcc: data?.payload?.headers?.find(
         (h) => h.name && h.name.toLowerCase() === "bcc"
       )?.value,
-      body: decodeEmailBody(data.payload?.parts
+      body: decodeEmailBody(
+        data.payload?.parts
           ?.find((p) => p.mimeType === "multipart/alternative")
           ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
-        data.payload?.parts?.find((p) => p.mimeType === "text/plain")),
+          data.payload?.parts?.find((p) => p.mimeType === "text/plain")
+      ),
       // snippet: data?.snippet,
     };
 
@@ -296,7 +300,7 @@ const deleteLabels = async () => {
 
 // getLatestMsgByLabels();
 
-cron.schedule("0 */2 * * *", () => {
+cron.schedule("0 */1 * * *", () => {
   console.log(" Executing recruitment workflows...");
 
   const workflowIds = [

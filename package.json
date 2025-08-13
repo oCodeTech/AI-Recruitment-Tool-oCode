@@ -30,7 +30,9 @@
     "express": "^5.1.0",
     "googleapis": "^153.0.0",
     "ioredis": "^5.6.1",
+    "mammoth": "^1.10.0",
     "node-cron": "^4.2.1",
+    "pdfreader": "^3.0.7",
     "pnpm": "^10.13.1",
     "puppeteer": "^24.15.0",
     "zod": "^3.25.71"

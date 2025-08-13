@@ -13,7 +13,7 @@ import { resendKeyDetailsTemplate } from "../templates/requestKeyDetails/resendK
 interface EmailData {
   to: string | null;
   subject: string | null;
-  body: string;
+  body?: string;
   rawMessage?: string;
   inReplyTo?: string;
   references?: string[];
@@ -21,11 +21,11 @@ interface EmailData {
   bccEmail?: string;
 }
 
-  const recruitmentMail = process.env.RECRUITMENT_MAIL || "hi@ocode.co";
-  
-  if (!recruitmentMail) {
-    throw new Error("RECRUITMENT_MAIL environment variable is not set");
-  }
+const recruitmentMail = process.env.RECRUITMENT_MAIL || "hi@ocode.co";
+
+if (!recruitmentMail) {
+  throw new Error("RECRUITMENT_MAIL environment variable is not set");
+}
 
 const gmailClient = await getGmailClient(recruitmentMail);
 
@@ -153,6 +153,20 @@ export const getEmailContent = async (emailId: string) => {
   }
 };
 
+export const getAttachment = async (attachmentId: string) => {
+  if (!attachmentId) throw new Error("attachmentId is required");
+  try {
+    const response = await gmailClient.users.messages.attachments.get({
+      userId: "me",
+      messageId: attachmentId,
+      id: attachmentId,
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
+
 export const containsKeyword = ({
   text,
   keywords,
@@ -228,7 +242,6 @@ export const sendEmail = async ({
     throw new Error("Invalid threadId");
   }
 
-
   try {
     if (rawMessage) {
       const response = await gmailClient.users.messages.send({
@@ -270,7 +283,90 @@ export const sendEmail = async ({
     throw error;
   }
 };
+export const sendTestEmail = async ({
+  to,
+  subject,
+  body,
+  inReplyTo,
+  references,
+  threadId,
+  bccEmail = "career@browsewire.net",
+  rawMessage,
+}: EmailData) => {
+  if (!to || !subject || !threadId) {
+    throw new Error("Email data is required");
+  }
+  if (typeof threadId !== "string" || threadId.trim() === "") {
+    throw new Error("Invalid threadId");
+  }
+  try {
+    if (rawMessage) {
+      const response = await gmailClient.users.messages.send({
+        userId: "me",
+        requestBody: {
+          raw: rawMessage,
+          threadId: threadId,
+        },
+      });
+      return response.data;
+    }
 
+    if (!body) {
+      throw new Error("Email body is required");
+    }
+
+    let signature = "";
+    try {
+      const sendAsResponse = await gmailClient.users.settings.sendAs.list({
+        userId: "me",
+      });
+      const primarySendAs = sendAsResponse.data.sendAs?.find(
+        (as) => as.isPrimary
+      );
+      signature = primarySendAs?.signature || "";
+    } catch (error) {
+      console.error("Error fetching signature:", error);
+    }
+
+    const containsHtml = /<[a-z][\s\S]*>/i.test(body);
+
+    let emailBody;
+    if (containsHtml) {
+      emailBody = signature ? `${body}<br><br>--<br>${signature}` : body;
+    } else {
+      const plainSignature = signature.replace(/<[^>]*>/g, "");
+      emailBody = signature ? `${body}\n\n--\n${plainSignature}` : body;
+    }
+
+    let headers = `From: oCode Recruiter <${recruitmentMail}>\r\nTo: ${to}\r\nSubject: ${subject}`;
+    if (inReplyTo) {
+      headers += `\r\nIn-Reply-To: ${inReplyTo}`;
+    }
+    if (references && references.length > 0) {
+      headers += `\r\nReferences: ${references.join(" ")}`;
+    }
+    if (bccEmail) {
+      headers += `\r\nBcc: ${bccEmail}`;
+    }
+    headers += `\r\nContent-Type: ${containsHtml ? "text/html" : "text/plain"}; charset="UTF-8"`;
+
+    const emailRawMessage = Buffer.from(`${headers}\r\n\r\n${emailBody}`)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    const response = await gmailClient.users.messages.send({
+      userId: "me",
+      requestBody: {
+        raw: emailRawMessage,
+        threadId: threadId,
+      },
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};
 export const modifyEmailLabels = async ({
   emailId,
   threadId,
@@ -415,6 +511,21 @@ export const sendThreadReplyEmail = async ({
     }
     if (!templateMailBody) throw new Error(`${templateId} template not found`);
 
+    let signatureHtml = "";
+    try {
+      const sendAsResponse = await gmailClient.users.settings.sendAs.list({
+        userId: "me",
+      });
+      const primarySendAs = sendAsResponse.data.sendAs?.find(
+        (as) => as.isPrimary
+      );
+      signatureHtml = primarySendAs?.signature || "";
+    } catch (error) {
+      console.error("Error fetching signature:", error);
+    }
+
+    const signatureText = signatureHtml.replace(/<[^>]*>/g, "");
+
     const replyMail = templateMailBody
       .replaceAll("[Candidate Name]", name ? name : "Candidate")
       .replaceAll(
@@ -423,15 +534,17 @@ export const sendThreadReplyEmail = async ({
       )
       .replaceAll("[Company Name]", "oCode Technologies");
 
+    const replyMailWithSignature = signatureHtml
+      ? `${replyMail}\n${signatureText}`
+      : replyMail;
+
     const htmlBody = replyMail
       .split("\n")
       .map((line) => {
         const trimmedLine = line.trim();
-
         if (trimmedLine === "") {
           return "<br>";
         }
-
         return `<p style="margin: 0 0 1em 0; font-family: Arial, sans-serif; line-height: 1.6; color: #333333;">${trimmedLine}</p>`;
       })
       .join("");
@@ -444,11 +557,15 @@ export const sendThreadReplyEmail = async ({
   <title>${subject?.includes("Re:") ? subject : `Re: ${subject}`}</title>
 </head>
 <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f8f9fa; color: #333333;">
-  <div style="width: 100%; padding: 20px; background-color: #ffffff; box-sizing: border-box;">
+  <div style="width: 100%; padding-top: 20px; padding-left: 20px; padding-right: 20px; background-color: #ffffff; box-sizing: border-box;">
     ${htmlBody}
   </div>
 </body>
 </html>`;
+
+    const fullHtmlBodyWithSignature = signatureHtml
+      ? `${fullHtmlBody}<div style="padding-left: 20px; padding-right: 20px"><br>${signatureHtml}</div>`
+      : fullHtmlBody;
 
     const boundary = "boundary_" + Math.random().toString(36).substring(7);
     const recruitmentEmail = process.env.RECRUITMENT_MAIL || "hi@ocode.co";
@@ -469,13 +586,13 @@ export const sendThreadReplyEmail = async ({
       `Content-Type: text/plain; charset="UTF-8"`,
       `Content-Transfer-Encoding: 7bit`,
       "",
-      replyMail,
+      replyMailWithSignature,
       "",
       `--${boundary}`,
       `Content-Type: text/html; charset="UTF-8"`,
       `Content-Transfer-Encoding: 7bit`,
       "",
-      fullHtmlBody,
+      fullHtmlBodyWithSignature,
       "",
       `--${boundary}--`,
     ].join("\r\n");
@@ -486,10 +603,9 @@ export const sendThreadReplyEmail = async ({
       .replace(/\//g, "_")
       .replace(/=+$/, "");
 
-    const sendMailResp = await sendEmail({
+    const sendMailResp = await sendTestEmail({
       to: userEmail,
       subject: subject?.includes("Re:") ? subject : `Re: ${subject}`,
-      body: replyMail,
       inReplyTo: inReplyTo,
       references: references,
       threadId: threadId,

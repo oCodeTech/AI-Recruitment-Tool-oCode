@@ -786,7 +786,7 @@ const sendConfirmationEmail = createStep({
                 ? "templates-request_key_details-developer-fresher"
                 : null;
 
-          if (!templateId) {
+          if (!templateId || applicationCategory === "Unclear Applications") {
             await modifyEmailLabels({
               emailId: mail.id,
               addLabelIds: ["Unclear Applications", "Pre-Stage"],

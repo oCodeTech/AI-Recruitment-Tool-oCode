@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    command: ["redis-server", "--requirepass", "SecurePassword123"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - mastra-network
+
+  mastra-app:
+    build: .
+    ports:
+      - "4111:4111" # Change if your app uses a different port
+      - "5000:5000"
+    environment:
+      MASTRA_TELEMETRY_DISABLED: "true"
+      POSTHOG_DISABLED: "true"
+    restart: unless-stopped
+    networks:
+      - mastra-network
+
+volumes:
+  redis-data:
+
+networks:
+  mastra-network:
+    driver: bridge

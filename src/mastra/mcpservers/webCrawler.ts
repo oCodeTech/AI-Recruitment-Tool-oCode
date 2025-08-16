@@ -1,13 +1,11 @@
 import { MCPClient } from "@mastra/mcp";
 
 // Configure MCPClient to connect to your server(s)
-export const gmailMcp = new MCPClient({
+export const webCrawlerMcp = new MCPClient({
   servers: {
-    gmail: {
+    fetcher: {
       command: "npx",
-      args: [
-        "@gongrzhe/server-gmail-autoauth-mcp"
-      ]
+      args: ["-y", "fetcher-mcp"]
     },
   },
 });

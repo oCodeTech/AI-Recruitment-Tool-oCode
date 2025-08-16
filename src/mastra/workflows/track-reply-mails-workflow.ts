@@ -19,8 +19,6 @@ import { decodeEmailBody } from "../../utils/gmail";
 import {
   extractDetailedCandidateInfo,
   extractTextFromAttachment,
-  extractTextFromDOCX,
-  extractTextFromPDF,
   fastParseEmail,
 } from "../../utils/emailUtils";
 
@@ -80,8 +78,8 @@ const AgentTrigger = createStep({
 
     const searchInboxInput = {
       userId: "me",
-      q: `label:"Stage1 Interview" OR label:"Pre-Stage"`,
-      maxResults: 20,
+      q: `label:"Stage1 Interview" OR label:"Pre-Stage" -label:Rejected -label:High Salary Expectation`,
+      maxResults: 50,
     };
     try {
       const searchResult = await gmailSearchEmails(searchInboxInput);
@@ -407,12 +405,10 @@ const analyseApplicants = createStep({
             ];
             return requiredFields.includes(key) && value === "unclear";
           })
-        : true; 
+        : true;
 
       if (!missingKeyDetails && fastExtractedDetails) {
         emailMetaData.keyDetails = fastExtractedDetails;
-        console.log("Fast extracted details", fastExtractedDetails);
-        new Promise((resolve) => setTimeout(resolve, 1000));
         applicantsData.push(emailMetaData);
         continue;
       }
@@ -887,7 +883,7 @@ const migrateApplicantsWithKeyDetails = createStep({
       if (!threadMessages || !threadMessages.length) continue;
 
       let resumeAttachment = null;
-
+      let resumeWebUrl = "";
       for (const message of threadMessages) {
         const attachmentIds = (message.payload?.parts || [])
           .filter((p) =>
@@ -897,11 +893,9 @@ const migrateApplicantsWithKeyDetails = createStep({
             })
           )
           .map((p) => ({
-            id: p.body?.attachmentId,
-            filename: p.filename,
+            id: p.body?.attachmentId ? p.body.attachmentId : "",
+            filename: p.filename || "",
           }));
-
-        console.log("attachmentIds", attachmentIds);
         for (const { id, filename } of attachmentIds) {
           if (!id || !filename) continue;
           try {
@@ -916,145 +910,301 @@ const migrateApplicantsWithKeyDetails = createStep({
           }
         }
 
-        if (resumeAttachment) break;
-      }
+        const plainTextPart =
+          message.payload?.parts
+            ?.find((p) => p.mimeType === "multipart/alternative")
+            ?.parts?.find((p2) => p2.mimeType === "text/plain") ||
+          message.payload?.parts?.find((p) => p.mimeType === "text/plain");
 
-      if (!resumeAttachment || !resumeAttachment.attachment) {
-        console.log("No resume attachment found", resumeAttachment);
-        continue;
+        const decodedBody = decodeEmailBody(plainTextPart).split("On")[0];
+
+        const urlRegex = /https?:\/\/[^\s]+/g;
+        const urls = decodedBody.match(urlRegex);
+        resumeWebUrl = urls?.find((url) => url.endsWith(".pdf")) || "";
+
+        if (resumeAttachment || resumeWebUrl) break;
       }
 
       let parsedResumeContent = null;
+      if (resumeAttachment) {
+        const resumeExtractionResult = await extractTextFromAttachment({
+          filename: resumeAttachment?.filename ?? "",
+          attachment: resumeAttachment?.attachment ?? "",
+          webUrl: resumeWebUrl,
+        });
 
-      const testparsingResumeContent = await extractTextFromAttachment({
-        filename: resumeAttachment.filename,
-        attachment: resumeAttachment.attachment,
-      });
+        if (!resumeExtractionResult) {
+          console.warn("Unable to parse resume, skipping this mail");
+          continue;
+        }
 
-      console.log("testparsingResumeContent", testparsingResumeContent);
+        parsedResumeContent = resumeExtractionResult;
+      } else if (resumeWebUrl) {
+        const resumeExtractionResult = await extractTextFromAttachment({
+          webUrl: resumeWebUrl,
+        });
 
-      // if (
-      //   resumeAttachment.filename.includes(".pdf") &&
-      //   resumeAttachment.attachment
-      // ) {
-      //   // For PDF attachments
-      //   const base64String = resumeAttachment.attachment;
-      //   const buffer = Buffer.from(
-      //     base64String.replace(/-/g, "+").replace(/_/g, "/") +
-      //       "=".repeat((4 - (base64String.length % 4)) % 4),
-      //     "base64"
-      //   );
-      //   console.log("resume pdf detected", resumeAttachment.filename);
-      //   parsedResumeContent = await extractTextFromPDF(buffer);
-      //   console.log(
-      //     "Resume content parsed via PDF function:",
-      //     parsedResumeContent
-      //   );
+        if (!resumeExtractionResult) {
+          console.warn("Unable to parse resume, skipping this mail");
+          continue;
+        }
+        parsedResumeContent = resumeExtractionResult;
+      } else {
+        console.warn("Unable to parse resume, skipping this mail");
+        continue;
+      }
 
-      //   continue;
-      // } else if (
-      //   (resumeAttachment.filename.includes(".doc") ||
-      //     resumeAttachment.filename.includes(".docx")) &&
-      //   resumeAttachment.attachment
-      // ) {
-      //   // For DOCX attachments
-      //   const base64Data = resumeAttachment.attachment
-      //     .replace(/-/g, "+")
-      //     .replace(/_/g, "/");
-      //   const padding = "=".repeat((4 - (base64Data.length % 4)) % 4);
-      //   const base64WithPadding = base64Data + padding;
-      //   const docBinary = Buffer.from(base64WithPadding, "base64");
-      //   parsedResumeContent = await extractTextFromDOCX(docBinary);
-      // } else {
-      //   console.log("Unable to parse resume, skipping this mail");
-      //   continue;
-      // }
+      if (!parsedResumeContent) {
+        console.warn("Unable to parse resume, skipping this mail");
+        continue;
+      }
 
-      // if (!parsedResumeContent) {
-      //   console.log("Unable to parse resume, skipping this mail");
-      //   continue;
-      // }
+      try {
+        const { currentCTC, expectedCTC, position, workExp } = keyDetails;
 
-      // console.log("Resume content:", parsedResumeContent);
+        // Validate input details
+        const isMeaningful = (value: string) =>
+          value &&
+          value.trim() &&
+          !["N/A", "NA", "na", "n/a", "null", "undefined"].includes(
+            value.toLowerCase()
+          );
 
-      //     try {
-      //       const resumeText = parsedResumeContent;
-      //       const currentCTC = keyDetails.currentCTC;
-      //       const expectedCTC = keyDetails.expectedCTC;
-      //       const jobPosition = keyDetails.position;
-      //       const workExperience = keyDetails.workExp;
+        const meaningfulCurrentCTC = isMeaningful(currentCTC)
+          ? currentCTC
+          : "Not provided";
+        const meaningfulExpectedCTC = isMeaningful(expectedCTC)
+          ? expectedCTC
+          : "Not provided";
+        const meaningfulJobPosition = isMeaningful(position)
+          ? position
+          : "Not provided";
+        const meaningfulWorkExperience = isMeaningful(workExp)
+          ? workExp
+          : "Not provided";
 
-      //       const result = await agent.generate(
-      //         `Resume Text: ${resumeText}
+        try {
+          // Prepare candidate details
+          const resumeText =
+            parsedResumeContent || "No resume content provided.";
+          const currentCTC = meaningfulCurrentCTC;
+          const expectedCTC = meaningfulExpectedCTC;
+          const jobPosition = meaningfulJobPosition;
+          const workExperience = meaningfulWorkExperience;
 
-      //  Candidate Details:
-      //  - Current CTC: ${currentCTC}
-      //  - Expected CTC: ${expectedCTC}
-      //  - Job Position Applying For: ${jobPosition}
-      //  - Work Experience: ${workExperience}
+          // Construct the prompt for the agent with detailed task description
+          const prompt = `TASK: Advanced Recruitment AI Screening Assistant
 
-      //  Analyze the candidate profile and generate interview questions as per the instructions.`,
-      //         {
-      //           instructions: `You are an AI recruitment assistant that must return ONLY a valid JSON response with no additional text.
+You are tasked with performing a comprehensive candidate screening process using multiple tools. This involves four main steps:
 
-      //   Process:
-      //   1. Evaluate provided key details:
-      //      - Check if currentCTC, expectedCTC, jobPosition, and workExperience are meaningful
-      //      - Consider values as UNMEANINGFUL if: null, undefined, empty string, "N/A", "NA", "na", "n/a", or similar placeholders
-      //      - For any UNMEANINGFUL values, extract the information from the resume text instead
+1. FIND RELEVANT JOB OPENINGS:
+   - Use the RAG system to search for job openings that match the candidate's applied position
+   - The candidate has applied for: ${jobPosition}
+   - Compare the job requirements with the candidate's qualifications
 
-      //   2. Use the job position (either provided or extracted from resume) to search the vector database for current openings
+2. EXTRACT KEY TECHNOLOGIES:
+   - From the job opening and candidate's resume, identify key technologies, frameworks, and skills
+   - Focus on the most important technologies (limit to top 3-4 to conserve tokens)
 
-      //   3. If no matching opening found, return JSON with "jobOpeningFound": false
+3. GET LATEST DOCUMENTATION:
+   - For each key technology, use the context7_resolve-library-id tool to get the library ID
+   - Then use context7_get-library-docs to retrieve the latest documentation
+   - This ensures questions are based on current best practices and features
 
-      //   4. If opening found:
-      //      a. Extract key details from:
-      //         - Provided candidate details (if meaningful)
-      //         - Resume text (for any unmeaningful provided details or additional context)
-      //         - Focus on:
-      //           * Technical skills and proficiency levels
-      //           * Project experience with relevant technologies
-      //           * Work history including roles, responsibilities, and achievements
-      //           * Current CTC and expected CTC (from provided details or resume)
-      //           * Educational background and certifications
-      //      b. Compare candidate qualifications against the retrieved job requirements
-      //      c. Generate 5-8 pre-round interview questions based on:
-      //         - Candidate's skills and experience from resume
-      //         - Requirements from matched job description
-      //         - No hallucinated content - only use information from resume and retrieved job description
+4. GENERATE TARGETED INTERVIEW QUESTIONS:
+   - Create questions that assess the candidate's knowledge of the latest features
+   - Questions should test both theoretical understanding and practical application
+   - Consider the candidate's experience level and projects mentioned in the resume
 
-      //   Output Schema (guaranteed JSON response):
-      //   {
-      //     "jobOpeningFound": boolean,
-      //     "jobTitle": string,
-      //     "jobDescription": string,
-      //     "interviewQuestions": [string]
-      //   }
+CANDIDATE INFORMATION:
+Resume Content: ${resumeText}
+Current CTC: ${currentCTC}
+Expected CTC: ${expectedCTC}
+Job Position Applying For: ${jobPosition}
+Work Experience: ${workExperience}
 
-      //   Rules:
-      //   - If no job opening: jobOpeningFound=false, jobTitle="", jobDescription="", interviewQuestions=[]
-      //   - If job found: jobOpeningFound=true, populate all fields
-      //   - Interview questions must be specific to the job position and candidate's profile
-      //   - Never add explanations outside the JSON
-      //   - Never hallucinate job details or candidate experiences
-      //   - Questions should cover technical skills, project experience, problem-solving, and role-specific knowledge
-      //   - Prioritize provided key details when meaningful, otherwise extract from resume text`,
-      //           maxSteps: 10,
-      //           maxTokens: 1000,
-      //         }
-      //       );
+Your goal is to produce a JSON response that indicates whether a relevant job opening was found and includes interview questions based on the latest documentation.`;
 
-      //       console.log(
-      //         "result of ai screening of candidate profile:",
-      //         result.text
-      //       );
-      //     } catch (err) {
-      //       console.log("error occured while extracting job title", err);
-      //     }
+          // Call the agent to generate a response with clear instructions
+          const result = await agent.generate(prompt, {
+            instructions: `Follow these instructions precisely to complete the advanced recruitment screening task:
 
-      // const applicationCategory = mail.keyDetails?.position
-      //   ? `${mail.keyDetails?.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
-      //   : "";
+STEP 1: SEARCH FOR JOB OPENINGS
+- Use the rag_query_documents tool to search for job openings matching "${jobPosition}"
+- Pass the exact job position as the query parameter
+- Wait for the tool results before proceeding
+
+STEP 2: ANALYZE SEARCH RESULTS
+- Case A: No job openings found
+  * Return this exact JSON: {"jobOpeningFound": false, "jobTitle": "", "jobDescription": "", "interviewQuestions": []}
+  * Do not proceed to further steps
+
+- Case B: Job openings found
+  * Select the most relevant job opening from the results
+  * Extract the exact job title and description from the document
+  * Identify key technologies, frameworks, and skills required for the position
+  * Also note technologies mentioned in the candidate's resume
+  * Proceed to Step 3
+
+- Case C: rag_query_documents tool fails or is unavailable
+  * Use the provided job position "${jobPosition}" and candidate's resume to identify key technologies
+  * Proceed to Step 3
+
+STEP 3: GET LATEST DOCUMENTATION
+- For each key technology (limit to top 3-4 most important ones):
+  * Use context7_resolve-library-id to get the library ID for the technology
+  * Then use context7_get-library-docs to retrieve the latest documentation
+  * Focus on recent updates, best practices, and advanced features
+- If any documentation tool fails, proceed with available information
+
+STEP 4: GENERATE INTERVIEW QUESTIONS
+- Create 5-8 targeted interview questions based on:
+  * Job requirements from Step 2
+  * Candidate's skills and experience from the resume
+  * Latest documentation and best practices from Step 3
+- Questions should test:
+  * Knowledge of recent features and updates
+  * Practical application of technologies
+  * Problem-solving abilities in relevant domains
+  * Understanding of best practices
+
+STEP 5: FORMAT RESPONSE
+- Return this JSON format: {"jobOpeningFound": true, "jobTitle": "[EXACT JOB TITLE]", "jobDescription": "[EXACT JOB DESCRIPTION]", "interviewQuestions": ["QUESTION 1", "QUESTION 2", ...]}
+- If you couldn't get job opening details, use: {"jobOpeningFound": true, "jobTitle": "${jobPosition}", "jobDescription": "Position based on candidate's application", "interviewQuestions": ["QUESTION 1", "QUESTION 2", ...]}
+
+CRITICAL REQUIREMENTS:
+- Return ONLY valid JSON with no additional text, explanations, or formatting
+- Ensure proper JSON syntax (correct quotes, commas, brackets)
+- Questions must be specific to both job requirements and candidate's profile
+- Incorporate insights from the latest documentation when available
+- Always return a valid JSON response, even if some tools fail
+
+EXAMPLE RESPONSES:
+1. No job found: {"jobOpeningFound": false, "jobTitle": "", "jobDescription": "", "interviewQuestions": []}
+2. Job found with documentation: {"jobOpeningFound": true, "jobTitle": "React Developer", "jobDescription": "Develop web applications using React", "interviewQuestions": ["How would you implement React Hooks in a complex component?", "What are the performance implications of the new React concurrent features?"]}
+3. Tools failed: {"jobOpeningFound": true, "jobTitle": "Python Developer", "jobDescription": "Position based on candidate's application", "interviewQuestions": ["Describe your experience with Python frameworks?"]}
+
+PERFORMANCE NOTES:
+- Prioritize getting documentation for the most important technologies only
+- Focus on generating high-quality, role-specific questions
+- Ensure questions assess both technical skills and practical application
+- Keep questions concise and directly related to the job requirements`,
+            maxSteps: 5, // Increased to accommodate multiple tool calls
+            maxTokens: 1000, // Increased to handle more detailed responses
+            temperature: 0.3,
+          });
+
+          // Try to parse the result as JSON with enhanced error handling
+        console.log("AI response:", result.text);
+        } catch (err) {
+          console.error("Error occurred while AI screening:", err);
+
+          // Provide a fallback response in case of error
+          const fallbackResponse = {
+            jobOpeningFound: true,
+            jobTitle: keyDetails.position || "Unknown Position",
+            jobDescription: "Position based on candidate's application",
+            interviewQuestions: [
+              "Can you describe your relevant experience?",
+              "What technical skills do you bring to this role?",
+              "How do you handle challenging situations at work?",
+            ],
+          };
+
+          console.log("Fallback response:", JSON.stringify(fallbackResponse));
+        }
+        //   // Try to parse the result as JSON
+        //   let parsedResult;
+        //   try {
+        //     // First, clean the response to remove any non-JSON content
+        //     let cleanResponse = result.text;
+
+        //     // Remove any numbered list formatting if present
+        //     cleanResponse = cleanResponse.replace(/^\d+\.\s*/gm, "");
+        //     cleanResponse = cleanResponse.replace(/^\s*\n\s*/gm, "");
+
+        //     // Try to find JSON object in the response
+        //     const jsonMatch = cleanResponse.match(/\{[\s\S]*\}/);
+        //     if (jsonMatch) {
+        //       parsedResult = JSON.parse(jsonMatch[0]);
+        //     } else {
+        //       throw new Error("No JSON found in response");
+        //     }
+
+        //     console.log(
+        //       "result of ai screening of candidate profile:",
+        //       JSON.stringify(parsedResult)
+        //     );
+        //   } catch (parseError) {
+        //     console.error("Failed to parse AI response as JSON:", parseError);
+        //     console.log("Raw response:", result.text);
+
+        //     // Try to extract questions from the response if JSON parsing fails
+        //     const questions = result.text
+        //       .split("\n")
+        //       .filter((line) => line.trim())
+        //       .map((line) => line.replace(/^\d+\.\s*/, "").trim())
+        //       .filter((q) => q.length > 10 && q.includes("?"))
+        //       .slice(0, 8);
+
+        //     // Create a valid JSON response
+        //     parsedResult = {
+        //       jobOpeningFound: true,
+        //       jobTitle: meaningfulJobPosition,
+        //       jobDescription: "Position based on candidate's application",
+        //       interviewQuestions:
+        //         questions.length > 0
+        //           ? questions
+        //           : [
+        //               "Can you describe your relevant experience?",
+        //               "What technical skills do you bring to this role?",
+        //               "How do you handle challenging situations at work?",
+        //             ],
+        //     };
+        //     console.log(
+        //       "Extracted questions response:",
+        //       JSON.stringify(parsedResult)
+        //     );
+        //   }
+        // } catch (err) {
+        //   console.error(
+        //     "Error occurred while generating interview questions:",
+        //     err
+        //   );
+
+        // Fallback response in case of error
+        const fallbackResponse = {
+          jobOpeningFound: true,
+          jobTitle: keyDetails.position || "Unknown Position",
+          jobDescription: "Position based on candidate's application",
+          interviewQuestions: [
+            "Can you describe your relevant experience?",
+            "What technical skills do you bring to this role?",
+            "How do you handle challenging situations at work?",
+          ],
+        };
+        console.log("Fallback response:", JSON.stringify(fallbackResponse));
+      } catch (err) {
+        console.error(
+          "Error occurred while generating interview questions:",
+          err
+        );
+        const fallbackResponse = {
+          jobOpeningFound: true,
+          jobTitle: keyDetails.position || "Unknown Position",
+          jobDescription: "Position based on candidate's application",
+          interviewQuestions: [
+            "Can you describe your relevant experience?",
+            "What technical skills do you bring to this role?",
+            "How do you handle challenging situations at work?",
+          ],
+        };
+        console.log("Fallback response:", JSON.stringify(fallbackResponse));
+      }
+
+      const applicationCategory = mail.keyDetails?.position
+        ? `${mail.keyDetails?.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
+        : "";
 
       // const confirmationMailResp = await sendThreadReplyEmail({
       //   name: mail.name || "",
@@ -1066,7 +1216,7 @@ const migrateApplicantsWithKeyDetails = createStep({
       //   templateId: "templates-confirmation-job_application_received",
       //   addLabelIds: [applicationCategory, "APPLICANTS"],
       //   removeLabelIds: [
-      //
+
       //     "INCOMPLETE_APPLICATIONS",
       //   ],
       // });

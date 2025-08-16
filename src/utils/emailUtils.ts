@@ -1,4 +1,4 @@
-import { PdfReader } from "pdfreader";
+import { extractText } from "unpdf";
 import mammoth from "mammoth";
 
 type FastParseResult = {
@@ -303,68 +303,10 @@ export function extractDetailedCandidateInfo(
   return result;
 }
 
-function formatResumeContent(text: string): string {
-  // Step 1: Remove all spaces between individual characters
-  let cleaned = text.replace(/(\S)\s(?=\S)/g, '$1');
-  
-  // Step 2: Fix punctuation spacing
-  cleaned = cleaned.replace(/\s+([.,;:!?)])/g, '$1');
-  cleaned = cleaned.replace(/([(])\s+/g, '$1');
-  
-  // Step 3: Add spaces after punctuation where needed
-  cleaned = cleaned.replace(/([.,;:!?])(?=[A-Z])/g, '$1 ');
-  
-  // Step 4: Add line breaks before all-caps section headers
-  cleaned = cleaned.replace(/([a-z.])([A-Z]{2,}(?:\s+[A-Z]{2,})*)/g, '$1\n\n$2');
-  
-  // Step 5: Add line breaks after dates
-  cleaned = cleaned.replace(/([A-Z][a-z]{2,} \d{4} - [A-Z][a-z]{2,} \d{4})(?=[A-Z])/g, '$1\n');
-  cleaned = cleaned.replace(/([A-Z][a-z]{2,} \d{4})(?=[A-Z])/g, '$1\n');
-  
-  // Step 6: Add line breaks after contact information
-  cleaned = cleaned.replace(/([\w.-]+@[\w.-]+\.\w+)(?=[A-Z])/g, '$1\n');
-  cleaned = cleaned.replace(/(\+\d{1,3}[-\s]?\d{10})(?=[A-Z])/g, '$1\n');
-  
-  // Step 7: Add line breaks after project titles
-  cleaned = cleaned.replace(/(\d{2,}\s*[A-Z]{2,}:)/g, '\n$1');
-  
-  // Step 8: Add line breaks after colons in section headers
-  cleaned = cleaned.replace(/(Languages|Awards|Activities|Programming|Database|Version|Web|Technologies|Achievement|Stream|Board|Key)(:)/gi, '$1$2\n');
-  
-  // Step 9: Clean up excessive line breaks
-  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-  
-  // Step 10: Add proper spacing after colons
-  cleaned = cleaned.replace(/:(?=[^\s])/g, ': ');
-  
-  // Step 11: Fix common capitalization issues
-  cleaned = cleaned.replace(/\b(b\.tech|c\+\+|sql|html|css|js|php|mysql|git|github|react\.js|spring boot)\b/gi, match => match.toUpperCase());
-  
-  // Step 12: Fix specific words that were incorrectly joined
-  cleaned = cleaned.replace(/Greenfield/g, 'Green field');
-  cleaned = cleaned.replace(/MySQL/g, 'My SQL');
-  cleaned = cleaned.replace(/SpringBoot/g, 'Spring Boot');
-  
-  // Step 13: Add line breaks before and after name (all caps followed by comma)
-  cleaned = cleaned.replace(/([A-Z]{2,} [A-Z]{2,},)/g, '\n$1\n');
-  
-  // Step 14: Fix contact info line
-  cleaned = cleaned.replace(/(\d+, .+?) \|/g, '$1\n|');
-  
-  return cleaned.trim();
-}
-
-
 export async function extractTextFromPDF(pdfBuffer: Buffer): Promise<string> {
   try {
-    let text = "";
-    return new Promise((resolve, reject) => {
-      new PdfReader().parseBuffer(pdfBuffer, (err, item) => {
-        if (err) reject(err);
-        else if (!item) resolve(formatResumeContent(text));
-        else if (item.text) text += item.text + " ";
-      });
-    });
+    const { text } = await extractText(pdfBuffer);
+    return text[0];
   } catch (err) {
     console.error("Error extracting text from PDF", err);
     throw err;
@@ -384,22 +326,45 @@ export async function extractTextFromDOCX(buffer: Buffer): Promise<string> {
 export async function extractTextFromAttachment({
   filename,
   attachment,
+  webUrl,
 }: {
-  filename: string;
-  attachment: string;
+  filename?: string;
+  attachment?: string;
+  webUrl?: string;
 }): Promise<string> {
-  const base64String = attachment.replace(/-/g, "+").replace(/_/g, "/");
-  const buffer = Buffer.from(
-    base64String + "=".repeat((4 - (base64String.length % 4)) % 4),
-    "base64"
-  );
+  if (filename && attachment) {
+    const base64String = attachment.replace(/-/g, "+").replace(/_/g, "/");
+    const buffer = Buffer.from(
+      base64String + "=".repeat((4 - (base64String.length % 4)) % 4),
+      "base64"
+    );
 
-  if (filename.includes(".pdf")) {
-    return await extractTextFromPDF(buffer);
-  } else if (filename.includes(".doc") || filename.includes(".docx")) {
-    return await extractTextFromDOCX(buffer);
+    if (filename.includes(".pdf")) {
+      return await extractTextFromPDF(buffer);
+    } else if (filename.includes(".doc") || filename.includes(".docx")) {
+      return await extractTextFromDOCX(buffer);
+    } else {
+      return "";
+    }
+  } else if (webUrl) {
+    try {
+      const response = await fetch(webUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/pdf",
+        },
+      });
+
+      if (!response.ok) throw Error("Failed to fetch resume");
+      const pdfBuffer = await response.arrayBuffer();
+      const { text } = await extractText(pdfBuffer);
+
+      return text[0];
+    } catch (err) {
+      console.log(err);
+      return "";
+    }
   } else {
-    console.log("Unable to parse resume, skipping this mail");
     return "";
   }
 }

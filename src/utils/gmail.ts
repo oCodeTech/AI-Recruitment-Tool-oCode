@@ -511,18 +511,9 @@ export const sendThreadReplyEmail = async ({
     }
     if (!templateMailBody) throw new Error(`${templateId} template not found`);
 
-    let signatureHtml = "";
-    try {
-      const sendAsResponse = await gmailClient.users.settings.sendAs.list({
-        userId: "me",
-      });
-      const primarySendAs = sendAsResponse.data.sendAs?.find(
-        (as) => as.isPrimary
-      );
-      signatureHtml = primarySendAs?.signature || "";
-    } catch (error) {
-      console.error("Error fetching signature:", error);
-    }
+    const signatureHtml = `
+    <div dir="ltr"><div dir="ltr" style="color:rgb(34,34,34)"><div><font face="georgia, serif"><span style="color:rgb(12,52,61)">Thank You</span><span style="color:rgb(12,52,61)"><font size="2">,</font></span></font></div><div><span style="color:rgb(12,52,61)"><font face="georgia, serif">Talent Recruiter</font></span> <span style="color:rgb(12,52,61)"><font face="georgia, serif">|</font></span> <span style="color:rgb(12,52,61)"><font face="georgia, serif" size="2" color="#38761d">oCode Technologies</font></span></div><div><font face="georgia, serif"><span style="color:rgb(12,52,61)">Phone: </span><span style="color:rgb(12,52,61)"><a href="tel:+917018701363">+917018701363</a></span><span style="color:rgb(12,52,61)"> | </span><span style="color:rgb(12,52,61)"><a href="tel:+919872294640">+919872294640</a></span><br></font></div><div><span style="color:rgb(12,52,61)"><a href="https://in.linkedin.com/company/ocodeco" target="_blank">LinkedIn</a></span> <span style="color:rgb(12,52,61)"><font face="georgia, serif">|</font></span> <span style="color:rgb(12,52,61)"><a href="https://www.fb.com/OcodeTech/" target="_blank">Facebook</a></span><br></div><div><font size="2" face="georgia, serif" color="#38761d">Website: <a href="http://www.ocode.co/" target="_blank">www.ocode.co</a></font></div></div>
+    `;
 
     const signatureText = signatureHtml.replace(/<[^>]*>/g, "");
 

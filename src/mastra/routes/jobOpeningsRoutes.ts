@@ -31,38 +31,36 @@ Retrieve up to 15 relevant documents (k = 15).`,
 /*
 dummy json for testing
 
-
-{
-  "position": "Software Engineer",
-  "category": "Technology",
-  "type": "Full-time",
-  "schedule": "Regular",
-  "location": "Remote",
-  "salaryRange": "100000-150000",
-  "description": "We are looking for a skilled software engineer to join our team. The ideal candidate will have a strong background in computer science and software engineering principles.",
-  "keyResponsibilites": [
-    "Design, develop, test, deploy, maintain and improve software",
-    "Collaborate with cross-functional teams to identify and prioritize project requirements",
-    "Troubleshoot and resolve complex technical issues",
-    "Develop and maintain technical documentation",
-    "Participate in code reviews and contribute to the improvement of the overall code quality"
-  ],
-  "requirements": [
-    "Bachelor's degree in Computer Science or related field",
-    "5+ years of experience in software development",
-    "Experience with distributed systems, cloud computing and containerization",
-    "Strong understanding of computer science fundamentals (data structures, algorithms, software design patterns)",
-    "Experience with Agile development methodologies",
-    "Strong communication and collaboration skills",
-    "Experience with AWS or Google Cloud"
-  ],
-  "qualifications": [
-    "Experience with Kubernetes",
-    "Experience with serverless computing",
-    "Experience with CI/CD pipelines",
-    "Strong understanding of security best practices",
-    "Experience with containerization using Docker"
-  ],
-  "experienceRequired": "5-10"
-}
+[
+  {
+    "position": "AI/ML Engineer",
+    "category": "Technology",
+    "type": "Full-time",
+    "schedule": "Regular",
+    "location": "Remote",
+    "salaryRange": "110000-160000",
+    "description": "We are seeking an AI/ML Engineer to design and implement machine learning models that drive business solutions. The role requires a strong understanding of machine learning algorithms and frameworks.",
+    "keyResponsibilities": [
+      "Develop and deploy machine learning models",
+      "Work with large datasets to derive insights",
+      "Collaborate with data scientists and engineers to integrate models into applications",
+      "Continuously improve model performance and accuracy",
+      "Stay updated with the latest developments in AI and ML"
+    ],
+    "requirements": [
+      "Master's degree in Computer Science, AI, or related field",
+      "3+ years of experience in machine learning or data science",
+      "Proficiency with ML frameworks (TensorFlow, PyTorch)",
+      "Experience with data processing and analysis tools (Pandas, NumPy)",
+      "Strong programming skills in Python"
+    ],
+    "qualifications": [
+      "Experience with cloud-based ML platforms (AWS SageMaker, Google AI Platform)",
+      "Knowledge of deep learning techniques",
+      "Experience with natural language processing (NLP)",
+      "Strong mathematical and statistical skills"
+    ],
+    "experienceRequired": "3-8"
+  }
+]
 */

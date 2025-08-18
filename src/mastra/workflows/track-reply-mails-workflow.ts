@@ -376,16 +376,27 @@ const analyseApplicants = createStep({
 
       const message = await getEmailContent(mail.id);
 
-      const attachmentIds =
+      const attachments =
         message.payload?.parts
           ?.filter((p) => p.body?.attachmentId)
-          .map((p) => p.body?.attachmentId) || [];
+          .map((p) => {
+            return {
+              id: p.body?.attachmentId ?? "",
+              filename: p.filename ?? "",
+            }
+          }) || [];
 
       let attachmentContent = "";
 
-      for (let attachmentId of attachmentIds) {
-        if (!attachmentId) continue;
-        const attachmentData = await getAttachment(attachmentId);
+      for (let attachment of attachments) {
+        if (!attachment.id) continue;
+        const encodedAttachment = await getAttachment(attachment.id);
+        const attachmentData = await extractTextFromAttachment({
+          filename: attachment.filename,
+          attachment: encodedAttachment.data ?? "",
+        });
+        console.log("attachmentData", typeof attachmentData);
+        console.dir(attachmentData, { depth: null });
         attachmentContent += attachmentData;
       }
 
@@ -394,6 +405,10 @@ const analyseApplicants = createStep({
         mail.body,
         attachmentContent
       );
+      console.log("from", mail.username, mail.userEmail);
+      console.log("attachment content");
+      console.dir(attachmentContent, { depth: null });
+      console.log("fastExtractedDetails", fastExtractedDetails);
 
       const missingKeyDetails = fastExtractedDetails
         ? Object.entries(fastExtractedDetails).some(([key, value]) => {
@@ -1095,7 +1110,7 @@ PERFORMANCE NOTES:
           });
 
           // Try to parse the result as JSON with enhanced error handling
-        console.log("AI response:", result.text);
+          console.log("AI response:", result.text);
         } catch (err) {
           console.error("Error occurred while AI screening:", err);
 
@@ -1483,8 +1498,9 @@ const markApplicationAsUnclear = createStep({
     for (let mail of mailsToMarkAsUnclear) {
       const existingLabels = mail.labels?.filter(
         (label) =>
-          !["Inbox", "Unread", "ALL", "INBOX", "UNREAD"].includes(label) &&
-          label !== "Unclear Applications"
+          !["Inbox", "Unread", "ALL", "INBOX", "UNREAD", "SENT"].includes(
+            label
+          ) && label !== "Unclear Applications"
       ) || ["Stage1 Interview"];
 
       await modifyEmailLabels({
@@ -1512,7 +1528,7 @@ const trackReplyMailsWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  // .then(deduplicateNewlyArrivedMails)
+  .then(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
   .then(sortReplyEmails)
   .branch([
@@ -1528,11 +1544,11 @@ const trackReplyMailsWorkflow = createWorkflow({
   ])
   .then(mergeResults)
   .branch([
-    [
-      async ({ inputData: { applicantsWithKeys } }) =>
-        applicantsWithKeys.length > 0,
-      migrateApplicantsWithKeyDetails,
-    ],
+    // [
+    //   async ({ inputData: { applicantsWithKeys } }) =>
+    //     applicantsWithKeys.length > 0,
+    //   migrateApplicantsWithKeyDetails,
+    // ],
     [
       async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
       migrateConfirmedApplicants,

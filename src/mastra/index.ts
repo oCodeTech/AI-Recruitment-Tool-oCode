@@ -21,7 +21,6 @@ import {
 } from "../utils/gmail";
 import { debugWorkflow } from "./workflows/debug-workflow";
 import { recruitmentIndeedPreStageWorkflow } from "./workflows/recruitment-indeed-pre-stage-workflow";
-import { memoryAgent } from "./agents/memoryAgent";
 
 const app = express();
 const port = process.env.NODE_PORT || 5000;
@@ -42,13 +41,12 @@ export const mastra = new Mastra({
     recruitmentPreStageWorkflow,
     recruitmentIndeedPreStageWorkflow,
     trackReplyMailsWorkflow,
-    debugWorkflow
+    debugWorkflow,
   },
   agents: {
     ragAgent,
     contextQAAgent,
     webCrawlerAgent,
-    memoryAgent
   },
   storage: new LibSQLStore({
     // stores telemetry, evals, ... into memory storage, if it needs to persist, change to file:../mastra.db

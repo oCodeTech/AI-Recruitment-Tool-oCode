@@ -16,10 +16,10 @@ function getVectorStore(): UpstashVector | PgVector {
       });
     } else if (
       enviroment === "production" &&
-      process.env.POSTGRES_VECOTR_CONNECTION_STRING
+      process.env.POSTGRES_VECTOR_CONNECTION_STRING
   ) {
     return new PgVector({
-      connectionString: process.env.POSTGRES_VECOTR_CONNECTION_STRING,
+      connectionString: process.env.POSTGRES_VECTOR_CONNECTION_STRING,
     });
   }
 }catch(e){

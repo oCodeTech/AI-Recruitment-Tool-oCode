@@ -31,6 +31,8 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
       const match = subject.match(pattern);
       if (match) {
         jobTitle = match[1].trim();
+        // Clean up any parenthetical information
+        jobTitle = jobTitle.replace(/\s*\(.*?\)$/, "").trim();
         break;
       }
     }
@@ -44,7 +46,6 @@ export function fastParseEmail(subject: string, body: string): FastParseResult {
       jobTitle = jobTitle
         .replace(/^post of\s+/i, "")
         .replace(/^position of\s+/i, "")
-        .replace(/^frontend\s+/i, "")
         .replace(/\s+Position$/i, "")
         .replace(/\s+Role$/i, "")
         .replace(/\s+at\s+.+$/i, "")
@@ -231,14 +232,14 @@ export function extractDetailedCandidateInfo(
 
   /* ---------- 1. Position extraction ---------- */
   let position: string = "unclear";
-
   // Try to extract from subject first
   if (subject) {
     const subjectPatterns = [
-      /^(?:Re:\s*)?New application received for the position of (.+?)(?:\s+at\s+)/i,
+      /^(?:Re:\s*)?New application received for the position of (.+?)(?:\s+at\s+|$)/i,
       /^(?:Re:\s*)?Job Application\s+\|\s*(.+?)\s*\|/i,
+      // Add pattern for "Application for [Position] Position" format
+      /^(?:Re:\s*)?Application for (.+?) Position/i,
     ];
-
     for (const pattern of subjectPatterns) {
       const match = subject.match(pattern);
       if (match) {
@@ -254,42 +255,60 @@ export function extractDetailedCandidateInfo(
   if (position === "unclear") {
     position = extractField([
       // Bullet point format
-      /•\s*position\s+applied\s+for:\s*([^•]+)/i,
+      /•\s*position\s+applied\s+for:\s*([^•\n]+)/i,
       // Asterisk format
-      /\*Position\s+Applied\s+For\*:\s*([^*]+)/i,
-      // Simple format
-      /position\s*[:.]\s*([^•\n*]+)/i,
+      /\*Position\s+Applied\s+For\*:\s*([^*\n]+)/i,
+      // Dash format
+      /-\s*Position\s+applied\s+for:\s*([^-]+)/i,
+      // Simple format - stop at next field or end of line
+      /position\s*[:.]\s*([^•\n*]*(?=(?:\s*[•*]|\s*\d+\.|\s*[A-Z][a-z]+\s*[:.]|-|$)))/i,
+      // Numbered list format
+      /(?:^|\s)\d+\.\s*Position\s*[:.-]?\s*([^\d\n]+)/i,
     ]);
   }
 
   /* ---------- 2. Current CTC extraction ---------- */
   const currentCTC = extractField([
+    // Numbered list format (like "1. Current CTC - 24k")
+    /(?:^|\s)\d+\.\s*Current\s+CTC\s*[-.:]?\s*([^\d\n]+?)(?=\s*\d+\.|$)/i,
     // Bullet point format
-    /•\s*current\s+ctc[^:]*:\s*([^•]+)/i,
+    /•\s*current\s+ctc[^:]*:\s*([^•\n]+?)(?=•|$)/i,
     // Asterisk format
-    /\*Current\s+CTC\*:\s*([^*]+)/i,
-    // Simple format
-    /current\s+ctc\s*[:.]\s*([^•\n*]+)/i,
+    /\*Current\s+CTC\*:\s*([^*\n]+?)(?=\*|$)/i,
+    // Dash format
+    /-\s*Current\s+CTC:\s*([^-\n]+?)(?=-|$)/i,
+    // Simple format - stop at next field
+    /current\s+ctc\s*[:.]\s*([^•\n*]+?)(?=(?:\s*[•*]|\s*\d+\.|\s*[A-Z][a-z]+\s*[:.]|-|$))/i,
   ]);
 
   /* ---------- 3. Expected CTC extraction ---------- */
   const expectedCTC = extractField([
+    // Numbered list format (like "2. Expected CTC - 30k")
+    /(?:^|\s)\d+\.\s*Expected\s+CTC\s*[-.:]?\s*([^\d\n]+?)(?=\s*\d+\.|$)/i,
     // Bullet point format
-    /•\s*expected\s+ctc:\s*([^•]+)/i,
+    /•\s*expected\s+ctc:\s*([^•\n]+?)(?=•|$)/i,
     // Asterisk format
-    /\*Expected\s+CTC\*:\s*([^*]+)/i,
-    // Simple format
-    /expected\s+ctc\s*[:.]\s*([^•\n*]+)/i,
+    /\*Expected\s+CTC\*:\s*([^*\n]+?)(?=\*|$)/i,
+    // Dash format
+    /-\s*Expected\s+CTC:\s*([^-\n]+?)(?=-|$)/i,
+    // Simple format - stop at next field
+    /expected\s+ctc\s*[:.]\s*([^•\n*]+?)(?=(?:\s*[•*]|\s*\d+\.|\s*[A-Z][a-z]+\s*[:.]|-|$))/i,
   ]);
 
   /* ---------- 4. Work Experience extraction ---------- */
   const workExp = extractField([
+    // Numbered list format (like "5. Total relevant work experience - 2 year 6 months")
+    /(?:^|\s)\d+\.\s*Total\s+(?:relevant\s+)?work\s+experience\s*[-.:]?\s*([^\d\n]+?)(?=\s*\d+\.|$)/i,
     // Bullet point format
-    /•\s*total\s+(?:relevant\s+)?work\s+experience:\s*([^•]+)/i,
+    /•\s*total\s+(?:relevant\s+)?work\s+experience:\s*([^•\n]+?)(?=•|$)/i,
     // Asterisk format
-    /\*Total\s+Relevant\s+Work\s+Experience\*:\s*([^*]+)/i,
-    // Simple format
-    /total\s+experience\s*[:.]\s*([^•\n*]+)/i,
+    /\*Total\s+Relevant\s+Work\s+Experience\*:\s*([^*\n]+?)(?=\*|$)/i,
+    // Dash format
+    /-\s*Total\s+relevant\s+work\s+experience:\s*([^-\n]+?)(?=-|$)/i,
+    // Simple format - stop at next field
+    /total\s+(?:relevant\s+)?work\s+experience\s*[:.]\s*([^•\n*]+?)(?=(?:\s*[•*]|\s*\d+\.|\s*[A-Z][a-z]+\s*[:.]|-|$))/i,
+    // Handle "Total Experience" format
+    /total\s+experience\s*[:.]\s*([^•\n*]+?)(?=(?:\s*[•*]|\s*\d+\.|\s*[A-Z][a-z]+\s*[:.]|-|$))/i,
   ]);
 
   // Create result object with only the required fields
@@ -305,11 +324,12 @@ export function extractDetailedCandidateInfo(
 
 export async function extractTextFromPDF(pdfBuffer: Buffer): Promise<string> {
   try {
-    const { text } = await extractText(pdfBuffer);
+    const { text } = await extractText(new Uint8Array(pdfBuffer));
+
     return text[0];
   } catch (err) {
     console.error("Error extracting text from PDF", err);
-    throw err;
+    throw "";
   }
 }
 
@@ -365,6 +385,41 @@ export async function extractTextFromAttachment({
       return "";
     }
   } else {
+    return "";
+  }
+}
+
+export async function extractResumeText(resumeLink: string) {
+  if (!resumeLink) return "";
+
+  try {
+    const response = await fetch(resumeLink, {
+      method: "GET",
+      headers: {
+        "Content-Type": "text/html",
+      },
+    });
+    if (!response.ok) throw Error("Failed to fetch resume");
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (true) {
+      const result = await reader?.read();
+      if (!result) break; // or throw an error, depending on your use case
+      const { value, done } = result;
+      if (done) break;
+      text += decoder.decode(value);
+    }
+
+    console.log("text", text);
+
+    return text;
+    // const pdfBuffer = await response.arrayBuffer();
+    // const { text } = await extractText(pdfBuffer);
+    // return text[0];
+  } catch (err) {
+    console.log(err);
     return "";
   }
 }

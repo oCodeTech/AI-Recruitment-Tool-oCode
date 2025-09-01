@@ -374,29 +374,49 @@ const analyseApplicants = createStep({
         body: mail.body,
       };
 
-      const message = await getEmailContent(mail.id);
+      const threadMessages = await getThreadMessages(mail.threadId);
 
-      const attachments =
-        message.payload?.parts
-          ?.filter((p) => p.body?.attachmentId)
-          .map((p) => {
-            return {
-              id: p.body?.attachmentId ?? "",
-              filename: p.filename ?? "",
+      if (!threadMessages || !threadMessages.length) continue;
+
+      const attachments: { id: string; filename: string }[] = [];
+
+      const attachmentsMap = new Map<
+        string,
+        { id: string; filename: string }
+      >();
+      for (let threadMessage of threadMessages) {
+        if (!threadMessage.id) continue;
+
+        const message = await getEmailContent(threadMessage.id);
+
+        const parts = message.payload?.parts;
+        if (parts) {
+          for (let part of parts) {
+            if (part.body?.attachmentId && part.filename) {
+              const attachment = {
+                id: part.body.attachmentId,
+                filename: part.filename,
+              };
+              attachmentsMap.set(attachment.id, attachment);
             }
-          }) || [];
+          }
+        }
+      }
+
+      for (let [_, attachment] of attachmentsMap) {
+        attachments.push(attachment);
+      }
 
       let attachmentContent = "";
 
       for (let attachment of attachments) {
         if (!attachment.id) continue;
         const encodedAttachment = await getAttachment(attachment.id);
+
         const attachmentData = await extractTextFromAttachment({
           filename: attachment.filename,
           attachment: encodedAttachment.data ?? "",
         });
-        console.log("attachmentData", typeof attachmentData);
-        console.dir(attachmentData, { depth: null });
         attachmentContent += attachmentData;
       }
 
@@ -406,18 +426,11 @@ const analyseApplicants = createStep({
         attachmentContent
       );
       console.log("from", mail.username, mail.userEmail);
-      console.log("attachment content");
-      console.dir(attachmentContent, { depth: null });
       console.log("fastExtractedDetails", fastExtractedDetails);
 
       const missingKeyDetails = fastExtractedDetails
         ? Object.entries(fastExtractedDetails).some(([key, value]) => {
-            const requiredFields = [
-              "position",
-              "currentCTC",
-              "expectedCTC",
-              "workExp",
-            ];
+            const requiredFields = ["position", "workExp"];
             return requiredFields.includes(key) && value === "unclear";
           })
         : true;
@@ -443,6 +456,7 @@ const analyseApplicants = createStep({
        
 
         Return the result as a JSON object with the required fields that are present in the email body.
+        Do not use RAG or query_vector_tool.
             `,
             maxSteps: 20,
             maxTokens: 1000,
@@ -1007,126 +1021,74 @@ const migrateApplicantsWithKeyDetails = createStep({
           const jobPosition = meaningfulJobPosition;
           const workExperience = meaningfulWorkExperience;
 
+          const query = `Please check the vector database to look for the job opening for the position of "${jobPosition}", I want only the job opening related to the job profile, if there is none, please do not return anything else`;
           // Construct the prompt for the agent with detailed task description
-          const prompt = `TASK: Advanced Recruitment AI Screening Assistant
+          const prompt = `You are an expert AI Recruitment Screener.
 
-You are tasked with performing a comprehensive candidate screening process using multiple tools. This involves four main steps:
+          INPUT
+          Resume: ${resumeText}
+          Current CTC: ${currentCTC}
+          Expected CTC: ${expectedCTC}
+          Target Role: ${jobPosition}
+          Experience: ${workExperience} years
 
-1. FIND RELEVANT JOB OPENINGS:
-   - Use the RAG system to search for job openings that match the candidate's applied position
-   - The candidate has applied for: ${jobPosition}
-   - Compare the job requirements with the candidate's qualifications
+          PIPELINE (execute in order)
+          1. JOB SEARCH  
+             • Invoke tool "query-vector" with { "query": "${query}", "limit": 5 }.  
+             • From the returned vectors, pick the single best job opening (highest score, title similar to "${jobPosition}").  
+          2. TECH EXTRACTION  
+             • From BOTH the chosen job description and the resume, extract the 3-4 most critical technologies / skills.  
+          3. DOC & RELEASE LOOKUP  
+             • For each technology, perform a web search for its **official 2024-2025 docs / release notes** and note 1-2 new or best-practice items.  
+          4. QUESTION GENERATION  
+             • Produce 6-8 concise, role-specific interview questions that:  
+              – test the latest features you just looked up,  
+              – map to actual job requirements,  
+              – match the candidate’s stated experience level.
 
-2. EXTRACT KEY TECHNOLOGIES:
-   - From the job opening and candidate's resume, identify key technologies, frameworks, and skills
-   - Focus on the most important technologies (limit to top 3-4 to conserve tokens)
+          OUTPUT – SINGLE JSON OBJECT
+            {
+              "jobOpeningFound": <boolean>,
+              "jobTitle": "<exact title>",
+              "jobDescription": "<exact description>",
+              "sourceUrl": "<url from vector payload or empty>",
+              "keyTechnologies": ["tech1", "tech2", ...],
+              "latestDocInsights": ["insight1", "insight2", ...],
+              "interviewQuestions": ["Q1", "Q2", ...]
+            }
 
-3. GET LATEST DOCUMENTATION:
-   - For each key technology, use the context7_resolve-library-id tool to get the library ID
-   - Then use context7_get-library-docs to retrieve the latest documentation
-   - This ensures questions are based on current best practices and features
+          RULES
+          • Return ONLY valid JSON.  
+          • If no relevant job is found (vector tool returns empty or low-score hits), set jobOpeningFound=false and return empty arrays/strings for the rest.  
+          • If any tool fails, proceed gracefully and add "toolFailure": "<short note>" to the JSON.  
+          • All questions must be answerable in 1-2 minutes.`;
 
-4. GENERATE TARGETED INTERVIEW QUESTIONS:
-   - Create questions that assess the candidate's knowledge of the latest features
-   - Questions should test both theoretical understanding and practical application
-   - Consider the candidate's experience level and projects mentioned in the resume
+          const instructions = `
+          STRICT 5-STEP WORKFLOW – execute sequentially.
 
-CANDIDATE INFORMATION:
-Resume Content: ${resumeText}
-Current CTC: ${currentCTC}
-Expected CTC: ${expectedCTC}
-Job Position Applying For: ${jobPosition}
-Work Experience: ${workExperience}
+          STEP 0  Sanitize inputs  
+            If resumeText or jobPosition is empty → {"jobOpeningFound":false, …} and STOP.
 
-Your goal is to produce a JSON response that indicates whether a relevant job opening was found and includes interview questions based on the latest documentation.`;
+          STEP 1  Job search via vector DB  
+            1.1 query-vector({ "query": "${query}", "limit": 5 })   // <-- dynamic string injected
+            1.2 If result is empty OR top score < 0.75 → {"jobOpeningFound":false, …} and STOP.  
+            1.3 Else extract: jobTitle, jobDescription, sourceUrl (if present in payload).
 
-          // Call the agent to generate a response with clear instructions
+          STEP 2  Technology extraction …
+          STEP 3  Latest-doc lookup …
+          STEP 4  Question generation …
+          STEP 5  Emit JSON …
+          `;
+
           const result = await agent.generate(prompt, {
-            instructions: `Follow these instructions precisely to complete the advanced recruitment screening task:
-
-STEP 1: SEARCH FOR JOB OPENINGS
-- Use the rag_query_documents tool to search for job openings matching "${jobPosition}"
-- Pass the exact job position as the query parameter
-- Wait for the tool results before proceeding
-
-STEP 2: ANALYZE SEARCH RESULTS
-- Case A: No job openings found
-  * Return this exact JSON: {"jobOpeningFound": false, "jobTitle": "", "jobDescription": "", "interviewQuestions": []}
-  * Do not proceed to further steps
-
-- Case B: Job openings found
-  * Select the most relevant job opening from the results
-  * Extract the exact job title and description from the document
-  * Identify key technologies, frameworks, and skills required for the position
-  * Also note technologies mentioned in the candidate's resume
-  * Proceed to Step 3
-
-- Case C: rag_query_documents tool fails or is unavailable
-  * Use the provided job position "${jobPosition}" and candidate's resume to identify key technologies
-  * Proceed to Step 3
-
-STEP 3: GET LATEST DOCUMENTATION
-- For each key technology (limit to top 3-4 most important ones):
-  * Use context7_resolve-library-id to get the library ID for the technology
-  * Then use context7_get-library-docs to retrieve the latest documentation
-  * Focus on recent updates, best practices, and advanced features
-- If any documentation tool fails, proceed with available information
-
-STEP 4: GENERATE INTERVIEW QUESTIONS
-- Create 5-8 targeted interview questions based on:
-  * Job requirements from Step 2
-  * Candidate's skills and experience from the resume
-  * Latest documentation and best practices from Step 3
-- Questions should test:
-  * Knowledge of recent features and updates
-  * Practical application of technologies
-  * Problem-solving abilities in relevant domains
-  * Understanding of best practices
-
-STEP 5: FORMAT RESPONSE
-- Return this JSON format: {"jobOpeningFound": true, "jobTitle": "[EXACT JOB TITLE]", "jobDescription": "[EXACT JOB DESCRIPTION]", "interviewQuestions": ["QUESTION 1", "QUESTION 2", ...]}
-- If you couldn't get job opening details, use: {"jobOpeningFound": true, "jobTitle": "${jobPosition}", "jobDescription": "Position based on candidate's application", "interviewQuestions": ["QUESTION 1", "QUESTION 2", ...]}
-
-CRITICAL REQUIREMENTS:
-- Return ONLY valid JSON with no additional text, explanations, or formatting
-- Ensure proper JSON syntax (correct quotes, commas, brackets)
-- Questions must be specific to both job requirements and candidate's profile
-- Incorporate insights from the latest documentation when available
-- Always return a valid JSON response, even if some tools fail
-
-EXAMPLE RESPONSES:
-1. No job found: {"jobOpeningFound": false, "jobTitle": "", "jobDescription": "", "interviewQuestions": []}
-2. Job found with documentation: {"jobOpeningFound": true, "jobTitle": "React Developer", "jobDescription": "Develop web applications using React", "interviewQuestions": ["How would you implement React Hooks in a complex component?", "What are the performance implications of the new React concurrent features?"]}
-3. Tools failed: {"jobOpeningFound": true, "jobTitle": "Python Developer", "jobDescription": "Position based on candidate's application", "interviewQuestions": ["Describe your experience with Python frameworks?"]}
-
-PERFORMANCE NOTES:
-- Prioritize getting documentation for the most important technologies only
-- Focus on generating high-quality, role-specific questions
-- Ensure questions assess both technical skills and practical application
-- Keep questions concise and directly related to the job requirements`,
-            maxSteps: 5, // Increased to accommodate multiple tool calls
-            maxTokens: 1000, // Increased to handle more detailed responses
-            temperature: 0.3,
+            instructions: instructions,
+            maxSteps: 6,
+            maxTokens: 2500,
+            temperature: 0.25,
           });
-
-          // Try to parse the result as JSON with enhanced error handling
           console.log("AI response:", result.text);
         } catch (err) {
           console.error("Error occurred while AI screening:", err);
-
-          // Provide a fallback response in case of error
-          const fallbackResponse = {
-            jobOpeningFound: true,
-            jobTitle: keyDetails.position || "Unknown Position",
-            jobDescription: "Position based on candidate's application",
-            interviewQuestions: [
-              "Can you describe your relevant experience?",
-              "What technical skills do you bring to this role?",
-              "How do you handle challenging situations at work?",
-            ],
-          };
-
-          console.log("Fallback response:", JSON.stringify(fallbackResponse));
         }
         //   // Try to parse the result as JSON
         //   let parsedResult;
@@ -1186,19 +1148,6 @@ PERFORMANCE NOTES:
         //     "Error occurred while generating interview questions:",
         //     err
         //   );
-
-        // Fallback response in case of error
-        const fallbackResponse = {
-          jobOpeningFound: true,
-          jobTitle: keyDetails.position || "Unknown Position",
-          jobDescription: "Position based on candidate's application",
-          interviewQuestions: [
-            "Can you describe your relevant experience?",
-            "What technical skills do you bring to this role?",
-            "How do you handle challenging situations at work?",
-          ],
-        };
-        console.log("Fallback response:", JSON.stringify(fallbackResponse));
       } catch (err) {
         console.error(
           "Error occurred while generating interview questions:",
@@ -1528,7 +1477,7 @@ const trackReplyMailsWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  .then(deduplicateNewlyArrivedMails)
+  // .then(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
   .then(sortReplyEmails)
   .branch([
@@ -1544,25 +1493,25 @@ const trackReplyMailsWorkflow = createWorkflow({
   ])
   .then(mergeResults)
   .branch([
+    [
+      async ({ inputData: { applicantsWithKeys } }) =>
+        applicantsWithKeys.length > 0,
+      migrateApplicantsWithKeyDetails,
+    ],
     // [
-    //   async ({ inputData: { applicantsWithKeys } }) =>
-    //     applicantsWithKeys.length > 0,
-    //   migrateApplicantsWithKeyDetails,
+    //   async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
+    //   migrateConfirmedApplicants,
     // ],
-    [
-      async ({ inputData: { applicantsData } }) => applicantsData.length > 0,
-      migrateConfirmedApplicants,
-    ],
-    [
-      async ({ inputData: { rejectedWithoutKeys } }) =>
-        rejectedWithoutKeys.length > 0,
-      markApplicationAsUnclear,
-    ],
-    [
-      async ({ inputData: { incompleteApplicationsData } }) =>
-        incompleteApplicationsData.length > 0,
-      informToReApply,
-    ],
+    // [
+    //   async ({ inputData: { rejectedWithoutKeys } }) =>
+    //     rejectedWithoutKeys.length > 0,
+    //   markApplicationAsUnclear,
+    // ],
+    // [
+    //   async ({ inputData: { incompleteApplicationsData } }) =>
+    //     incompleteApplicationsData.length > 0,
+    //   informToReApply,
+    // ],
     // [
     //   async ({ inputData: { rejectedWithoutKeys } }) =>
     //     rejectedWithoutKeys.length > 0,

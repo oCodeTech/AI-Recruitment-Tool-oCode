@@ -2,6 +2,7 @@ output.txt
 node_modules
 dist
 .mastra
+.kilocode
 job-openings
 service-account.json
 .env.development

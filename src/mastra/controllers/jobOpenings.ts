@@ -4,6 +4,9 @@ import { fileURLToPath } from "url";
 import * as fs from "fs";
 import z from "zod";
 import { mastra } from "..";
+import { MDocument } from "@mastra/rag";
+import crypto from "crypto";
+import { vectorStore } from "../../vectorDB/connection";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const jobOpeningsDir = path.resolve(__dirname, "../../src/mastra/job-openings");
@@ -25,55 +28,41 @@ const JobOpeningSchema = z
   .describe("Job opening details");
 
 export const getJobOpenings = async (req: Request, res: Response) => {
-  const jobId = req.query.jobId;
-  if (jobId && typeof jobId === "string" && jobId.trim() !== "") {
+  const jobQuery = req.query.jobQuery;
+  console.log("jobQuery", jobQuery);
+  if (jobQuery && typeof jobQuery === "string" && jobQuery.trim() !== "") {
     try {
-      const jobOpening = fs.readFileSync(
-        path.join(jobOpeningsDir, `${jobId}.json`),
-        "utf-8"
-      );
-      const parsedJobOpening = JSON.parse(jobOpening);
-      res.json(parsedJobOpening);
-      return;
+      const response = await fetch("http://localhost:11434/api/embed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "nomic-embed-text",
+          input: jobQuery,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
+      }
+
+      const { embeddings } = await response.json();
+
+      const results = await vectorStore.query({
+        indexName: "job-openings",
+        queryVector: embeddings[0],
+        topK: 3,
+      });
+
+      console.log("results", results);
+
+      return res.json(results);
     } catch (err) {
-      console.log(err);
-      res.json({ error: "Error occured while fetching job opening" });
-      return;
+      console.log("Error searching for job opening:", err);
+      return res.status(500).json({ error: "Error searching for job opening" });
     }
   }
 
-  try {
-    const jobOpenings = fs.readdirSync(jobOpeningsDir);
-
-    const jobOpeningsWithMetaData = jobOpenings
-      .map((jobOpening) => {
-        try {
-          const jobOpeningWithMetaData = JSON.parse(
-            fs.readFileSync(path.join(jobOpeningsDir, jobOpening), "utf-8")
-          );
-          delete jobOpeningWithMetaData.metadata.documentType;
-          delete jobOpeningWithMetaData.metadata.containsJobOpening;
-          delete jobOpeningWithMetaData.metadata.domain;
-          delete jobOpeningWithMetaData.metadata.description;
-          delete jobOpeningWithMetaData.metadata.relatedFields;
-          delete jobOpeningWithMetaData.metadata.keywords;
-          delete jobOpeningWithMetaData.metadata.summary;
-
-          return jobOpeningWithMetaData;
-        } catch (error) {
-          console.log(
-            `Error parsing job opening file: ${jobOpening}. Error: ${error}`
-          );
-          return null;
-        }
-      })
-      .filter((jobOpening) => jobOpening);
-
-    res.json(jobOpeningsWithMetaData);
-  } catch (error) {
-    console.log(error);
-    res.json({ error: "Error occured while fetching job openings" });
-  }
+  return [];
 };
 
 export const createJobOpening = async (req: Request, res: Response) => {
@@ -89,98 +78,62 @@ export const createJobOpening = async (req: Request, res: Response) => {
       return;
     }
 
-    const filePath = path.join(jobOpeningsDir, `jobOpening-${Date.now()}.json`);
+    const mDoc = MDocument.fromJSON(JSON.stringify(jobOpeningData));
 
-    const jobOpeningWithMetaData = {
-      ...jobOpeningData,
-      metadata: {
-        filePath: filePath,
-        documentType: "jobOpening",
-        containsJobOpening: true,
-        domain: "employment",
-        description:
-          "This document contains detailed information about a job opening.",
-        relatedFields: [
-          "position",
-          "category",
-          "type",
-          "schedule",
-          "location",
-          "salaryRange",
-          "description",
-          "keyResponsibilities",
-          "requirements",
-          "qualifications",
-          "experienceRequired",
-        ],
-        keywords: [
-          "job opening",
-          "employment",
-          "vacancy",
-          "hiring",
-          "recruitment",
-          "career opportunity",
-          jobOpeningData.position,
-          jobOpeningData.category,
-          jobOpeningData.location,
-        ],
-        summary: `Job opening for ${jobOpeningData.position} in ${jobOpeningData.location}.`,
-      },
-    };
+    const jsonHash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify(jobOpeningData))
+      .digest("hex");
+
+    const chunks = await mDoc.chunk({
+      strategy: "json",
+      maxSize: 400,
+      convertLists: true,
+      stripWhitespace: true,
+      keepSeparator: true,
+      overlap: 10,
+    });
 
     try {
-      if (!fs.existsSync(jobOpeningsDir)) {
-        fs.mkdirSync(jobOpeningsDir);
+      const response = await fetch("http://localhost:11434/api/embed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "nomic-embed-text",
+          input: chunks.map((c) => c.text),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error: ${response.statusText}`);
       }
 
-      fs.writeFileSync(filePath, JSON.stringify(jobOpeningWithMetaData));
+      const { embeddings } = await response.json();
 
-      const ragAgent = mastra?.getAgent("ragAgent");
+      const allIndexes = await vectorStore.listIndexes();
 
-      if (!ragAgent) throw Error("RAG agent not found");
-
-      console.log("job opening file created at path:", filePath);
-
-      try {
-        const supportedFileTypes = [".json", ".jsonl", ".txt", ".md", ".csv"];
-        const fileExtension = filePath
-          .slice(filePath.lastIndexOf("."))
-          .toLowerCase();
-
-        if (!supportedFileTypes.includes(fileExtension)) {
-          throw new Error(
-            `Unsupported file type: ${fileExtension}. Supported types: ${supportedFileTypes.join(", ")}`
-          );
-        }
-
-        const instructions = [
-          `Read the file at path: ${filePath}.`,
-          `Embed its content for RAG and store the result in the database.`,
-          `The file type is ${fileExtension}.`,
-        ].join(" ");
-
-        const indexResult = await ragAgent.generate(
-          `Index file at path ${filePath}`,
-          {
-            instructions,
-            maxSteps: 5,
-            maxTokens: 400,
-          }
-        );
-        console.log("Indexing completed:", indexResult.text);
-        res.status(200).json({ message: indexResult.text });
-        return;
-      } catch (error) {
-        console.error("Error during RAG indexing:", error);
-        res.status(500).json({ error: "Error during RAG indexing" });
-        return;
+      if (!allIndexes.includes("job-openings")) {
+        await vectorStore.createIndex({
+          indexName: "job-openings",
+          dimension: 768,
+        });
       }
-    } catch (error) {
-      console.error("Error occured while indexing the job opening:", error);
-      res
-        .status(500)
-        .json({ error: "Error occured while indexing the job opening" });
-      return;
+      const result = await vectorStore.upsert({
+        indexName: "job-openings",
+        vectors: embeddings,
+        metadata: chunks.map((chunk) => ({
+          text: chunk.text,
+          hash: jsonHash,
+          ...jobOpeningData,
+        })),
+      });
+
+      if (result.length > 0) {
+        return res.send("Job opening indexed successfully");
+      }
+    } catch (e) {
+      console.log(e);
+      return res.status(500).send("Error indexing job opening");
     }
   } catch (err) {
     console.log(err);
@@ -189,7 +142,7 @@ export const createJobOpening = async (req: Request, res: Response) => {
       .json({ error: "Error occured while indexing the job opening" });
     return;
   }
-}
+};
 
 export const deleteJobOpening = async (req: Request, res: Response) => {
   const jobId = req.query.jobId;
@@ -231,4 +184,4 @@ export const deleteJobOpening = async (req: Request, res: Response) => {
       return;
     }
   }
-}
+};

@@ -3,14 +3,13 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
 import { context7Mcp } from "../mcpservers/context7";
-import { ragMcp } from "../mcpservers/rag";
+import { queryVectorTool } from "../tools/queryVectorTool";
 
-const contextTools = await context7Mcp.getTools();
-const ragTools = await ragMcp.getTools();
+const context7Tools = await context7Mcp.getTools();
 
-const tools = {
-  ...contextTools,
-  ...ragTools,
+const contextTools = {
+  ...context7Tools,
+  queryVectorTool,
 };
 
 export const contextQAAgent = new Agent({
@@ -42,21 +41,8 @@ You strictly follow a Retrieval-Augmented Generation (RAG) methodology and only 
    Fetch real-time documentation for a resolved library ID.
 
 **RAG Tools:**
-1. **rag_embedding_documents**  
-   Add documents from a directory or file path for RAG embedding and store them in the database.  
-   _Supported file types: .json, .jsonl, .txt, .md, .csv_
-
-2. **rag_query_documents**  
-   Query indexed documents using RAG to retrieve relevant information.
-
-3. **rag_remove_document**  
-   Remove a specific document from the index by file path.
-
-4. **rag_remove_all_documents**  
-   Remove all documents from the index.
-
-5. **rag_list_documents**  
-   List all document paths currently indexed.
+1. **queryVectorTool**  
+   Queries the vector database to retrieve relevant vectors for a given query. This tool is used to implement Retrieval-Augmented Generation (RAG) tasks.
 
 ---
 
@@ -70,19 +56,7 @@ You strictly follow a Retrieval-Augmented Generation (RAG) methodology and only 
 2. **Documentation Retrieval**
    - Use "context7_get-library-docs" with the resolved/provided ID to fetch relevant documentation.
 
-3. **RAG Document Management**
-   - To add documents for RAG:  
-     - Use "rag_embedding_documents" with the directory or file path.
-   - To query indexed documents:  
-     - Use "rag_query_documents" with the user’s query.
-   - To remove a document:  
-     - Use "rag_remove_document" with the file path.
-   - To remove all documents:  
-     - Use "rag_remove_all_documents".
-   - To list all indexed documents:  
-     - Use "rag_list_documents".
-
-4. **Content Generation**
+3. **Content Generation**
    - Analyze the retrieved documentation and/or RAG query results.
    - Generate a response or construct content (e.g., interview questions) using only verified context.
 
@@ -109,10 +83,9 @@ You strictly follow a Retrieval-Augmented Generation (RAG) methodology and only 
 
 ---
 
-**You are not a general-purpose assistant. Only answer using verified sources from the Context7 and RAG systems. Follow the workflow, and ensure factual integrity in every response.**
-`,
+**You are not a general-purpose assistant. Only answer using verified sources from the Context7 and RAG systems. Follow the workflow, and ensure factual integrity in every response.**`,
   model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
-  tools: tools,
+  tools: contextTools,
   memory: new Memory({
     options: {
       threads: {

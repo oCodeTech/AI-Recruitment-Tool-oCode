@@ -11,9 +11,10 @@ import {
 } from "../../utils/gmail";
 import { redis } from "../../queue/connection";
 import { fastParseEmail } from "../../utils/emailUtils";
+import { env } from "../../utils/config";
 
-const recruitmentMail = process.env.RECRUITMENT_MAIL;
-const consultingMail = process.env.CONSULTING_MAIL;
+const recruitmentMail = env.RECRUITMENT_MAIL;
+const consultingMail = env.CONSULTING_MAIL;
 
 if (!recruitmentMail) {
   throw new Error("RECRUITMENT_MAIL environment variable is not set");

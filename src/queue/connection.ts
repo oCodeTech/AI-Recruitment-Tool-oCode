@@ -1,20 +1,28 @@
 import { RedisOptions, Redis } from "ioredis";
+import {env} from "../utils/config";
 
 const redisHost =
-  process.env.NODE_ENV === "development"
-    ? process.env.REDIS_DEV_HOST
-    : process.env.REDIS_HOST;
+  env.NODE_ENV === "development"
+    ? env.REDIS_DEV_HOST
+    : env.REDIS_HOST;
 
 const redisPort = Number(
-  process.env.NODE_ENV === "development"
-    ? process.env.REDIS_DEV_PORT
-    : process.env.REDIS_PORT
+  env.NODE_ENV === "development"
+    ? env.REDIS_DEV_PORT
+    : env.REDIS_PORT
 );
 
 const redisPassword =
-  process.env.NODE_ENV === "development"
-    ? process.env.REDIS_DEV_PASSWORD
-    : process.env.REDIS_PASSWORD;
+  env.NODE_ENV === "development"
+    ? env.REDIS_DEV_PASSWORD
+    : env.REDIS_PASSWORD;
+
+    console.log({
+      env: env.NODE_ENV,
+      redisHost,
+      redisPort,
+      redisPassword
+    })
 
 export const redisConnection: RedisOptions = {
   host: redisHost,

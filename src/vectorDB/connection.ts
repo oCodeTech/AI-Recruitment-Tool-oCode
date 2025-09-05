@@ -1,25 +1,36 @@
 import { UpstashVector } from "@mastra/upstash";
 import { PgVector } from "@mastra/pg";
+import { env } from "../utils/config";
 
 function getVectorStore(): UpstashVector | PgVector {
-  const enviroment = process.env.NODE_ENV || "development";
+  const enviroment = env.NODE_ENV || "development";
 
   try{
     if (
       enviroment === "development" &&
-      process.env.VECTOR_UPSTASH_URL &&
-      process.env.VECTOR_UPSTASH_TOKEN
+      env.VECTOR_UPSTASH_URL &&
+      env.VECTOR_UPSTASH_TOKEN
     ) {
+        console.log({
+      enviroment,
+      VECTOR_UPSTASH_URL: env.VECTOR_UPSTASH_URL,
+      VECTOR_UPSTASH_TOKEN: env.VECTOR_UPSTASH_TOKEN
+    })
       return new UpstashVector({
-        url: process.env.VECTOR_UPSTASH_URL!,
-        token: process.env.VECTOR_UPSTASH_TOKEN!,
+        url: env.VECTOR_UPSTASH_URL!,
+        token: env.VECTOR_UPSTASH_TOKEN!,
       });
     } else if (
       enviroment === "production" &&
-      process.env.POSTGRES_VECTOR_CONNECTION_STRING
+      env.POSTGRES_VECTOR_CONNECTION_STRING
   ) {
+            console.log({
+      enviroment,
+      POSTGRES_VECTOR_CONNECTION_STRING: env.POSTGRES_VECTOR_CONNECTION_STRING
+      
+    })
     return new PgVector({
-      connectionString: process.env.POSTGRES_VECTOR_CONNECTION_STRING,
+      connectionString: env.POSTGRES_VECTOR_CONNECTION_STRING,
     });
   }
 }catch(e){

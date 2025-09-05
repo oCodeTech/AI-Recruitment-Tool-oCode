@@ -11,6 +11,21 @@ services:
     networks:
       - mastra-network
 
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vector
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - mastra-network
+
   mastra-app:
     build: .
     ports:
@@ -19,12 +34,17 @@ services:
     environment:
       MASTRA_TELEMETRY_DISABLED: "true"
       POSTHOG_DISABLED: "true"
+      POSTGRES_VECTOR_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/vector
     restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
     networks:
       - mastra-network
 
 volumes:
   redis-data:
+  postgres-data:
 
 networks:
   mastra-network:

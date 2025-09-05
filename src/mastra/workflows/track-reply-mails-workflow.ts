@@ -21,6 +21,8 @@ import {
   extractTextFromAttachment,
   fastParseEmail,
 } from "../../utils/emailUtils";
+import { context7Mcp } from "../mcpservers/context7";
+import { queryVectorTool } from "../tools/queryVectorTool";
 
 interface ApplicantKeyDetails {
   position: string;
@@ -79,7 +81,7 @@ const AgentTrigger = createStep({
     const searchInboxInput = {
       userId: "me",
       q: `label:"Stage1 Interview" OR label:"Pre-Stage" -label:Rejected -label:High Salary Expectation`,
-      maxResults: 50,
+      maxResults: 100,
     };
     try {
       const searchResult = await gmailSearchEmails(searchInboxInput);
@@ -425,8 +427,6 @@ const analyseApplicants = createStep({
         mail.body,
         attachmentContent
       );
-      console.log("from", mail.username, mail.userEmail);
-      console.log("fastExtractedDetails", fastExtractedDetails);
 
       const missingKeyDetails = fastExtractedDetails
         ? Object.entries(fastExtractedDetails).some(([key, value]) => {
@@ -999,12 +999,6 @@ const migrateApplicantsWithKeyDetails = createStep({
             value.toLowerCase()
           );
 
-        const meaningfulCurrentCTC = isMeaningful(currentCTC)
-          ? currentCTC
-          : "Not provided";
-        const meaningfulExpectedCTC = isMeaningful(expectedCTC)
-          ? expectedCTC
-          : "Not provided";
         const meaningfulJobPosition = isMeaningful(position)
           ? position
           : "Not provided";
@@ -1016,156 +1010,160 @@ const migrateApplicantsWithKeyDetails = createStep({
           // Prepare candidate details
           const resumeText =
             parsedResumeContent || "No resume content provided.";
-          const currentCTC = meaningfulCurrentCTC;
-          const expectedCTC = meaningfulExpectedCTC;
           const jobPosition = meaningfulJobPosition;
           const workExperience = meaningfulWorkExperience;
 
           const query = `Please check the vector database to look for the job opening for the position of "${jobPosition}", I want only the job opening related to the job profile, if there is none, please do not return anything else`;
-          // Construct the prompt for the agent with detailed task description
-          const prompt = `You are an expert AI Recruitment Screener.
-
-          INPUT
-          Resume: ${resumeText}
-          Current CTC: ${currentCTC}
-          Expected CTC: ${expectedCTC}
-          Target Role: ${jobPosition}
-          Experience: ${workExperience} years
-
-          PIPELINE (execute in order)
-          1. JOB SEARCH  
-             • Invoke tool "query-vector" with { "query": "${query}", "limit": 5 }.  
-             • From the returned vectors, pick the single best job opening (highest score, title similar to "${jobPosition}").  
-          2. TECH EXTRACTION  
-             • From BOTH the chosen job description and the resume, extract the 3-4 most critical technologies / skills.  
-          3. DOC & RELEASE LOOKUP  
-             • For each technology, perform a web search for its **official 2024-2025 docs / release notes** and note 1-2 new or best-practice items.  
-          4. QUESTION GENERATION  
-             • Produce 6-8 concise, role-specific interview questions that:  
-              – test the latest features you just looked up,  
-              – map to actual job requirements,  
-              – match the candidate’s stated experience level.
-
-          OUTPUT – SINGLE JSON OBJECT
+          const promptChain = [
             {
-              "jobOpeningFound": <boolean>,
-              "jobTitle": "<exact title>",
-              "jobDescription": "<exact description>",
-              "sourceUrl": "<url from vector payload or empty>",
-              "keyTechnologies": ["tech1", "tech2", ...],
-              "latestDocInsights": ["insight1", "insight2", ...],
-              "interviewQuestions": ["Q1", "Q2", ...]
+              step: "sanitise",
+              prompt: `You are an input-sanitiser node.
+DYNAMIC CONTEXT:
+  resumeText = \`${resumeText}\`
+  jobPosition = \`${jobPosition}\`
+
+PREVIOUS RESULTS:
+{{LAST_RESULT}}
+
+TASK:
+1. If either dynamic value is empty / whitespace-only → return {"halt":true,"reason":"missing_resume_or_job"}.
+2. Else return {"halt":false,"cleanResume":<trimmed>,"cleanPosition":<trimmed>}.`,
+              instructions: `Produce ONLY the JSON object above. No prose, no markdown fences, no function calls.`,
+              tools: [],
+            },
+
+            {
+              step: "vector_search",
+              prompt: `You are a job-search node.
+DYNAMIC CONTEXT:
+  query = \`${query}\`
+  jobPosition = \`${jobPosition}\`
+
+PREVIOUS RESULTS:
+{{LAST_RESULT}}
+
+PIPELINE:
+1. Call tool query-vector({"query":"${query}","limit":5}).
+2. Pick the single best hit: highest score AND title similar to "${jobPosition}".
+3. If no hit OR top score < 0.75 → return {"jobOpeningFound":false}.
+4. Else extract: jobTitle, jobDescription, KeyResponsibilities, Requirements.`,
+              instructions: `Return ONLY {"jobOpeningFound":<bool>,"jobTitle":<str>,"jobDescription":<str>,"keyResponsibilities":<str>,"requirements":<str>}.  
+If the vector tool fails, add "toolFailure":"<short note>" and continue.`,
+              tools: ["query-vector"],
+            },
+
+            {
+              step: "tech_extraction",
+              prompt: `You are a tech-extraction node.
+DYNAMIC CONTEXT:
+  resumeText = \`${resumeText}\`
+
+PREVIOUS RESULTS:
+{{LAST_RESULT}}
+
+TASK:
+From BOTH the jobDescription, keyResponsibilities, requirements (above) and resumeText, jointly identify the 3-4 most critical technologies / skills required for the role. Ignore any technologies that are not in the resumeText.`,
+              instructions: `Output ONLY {"keyTechnologies":["tech1","tech2",...]}. No functions, no extra text.`,
+              tools: [],
+            },
+
+            {
+              step: "doc_lookup",
+              prompt: `You are a documentation-insight node.
+PREVIOUS RESULTS:
+{{LAST_RESULT}}
+
+TASK FOR EACH technology in keyTechnologies:
+1. Call context7_resolve-library-id with the technology name.
+2. Pick the most relevant library ID.
+3. Call context7_get-library-docs with that ID.
+4. Extract 1-2 **well-established, widely-adopted** features or best-practices (≤15 words each) that have been in the framework for at least one major release cycle (i.e. skip "brand-new" or bleeding-edge items).`,
+              instructions: `Return ONLY {"latestDocInsights":["insight1","insight2",...]} (max 2 per tech, 8 total).  
+Pick **stable, mainstream** capabilities only—avoid anything released in the last 6 months.  
+Use the Context7 tools in the exact order shown; do NOT call any other tools.`,
+              tools: [
+                "context7_resolve-library-id",
+                "context7_get-library-docs",
+              ],
+            },
+
+            {
+              step: "question_generation",
+              prompt: `You are an interviewer-question node.
+DYNAMIC CONTEXT:
+  workExperience = \`${workExperience}\` years
+
+PREVIOUS RESULTS:
+{{LAST_RESULT}}
+
+TASK:
+Create 6-8 concise, role-specific questions that:
+- test the **stable, mainstream features** listed in latestDocInsights,
+- map to **actual job requirements**,
+- match the candidate’s experience level (junior ≤2 y, mid 3-5 y, senior 6+ y).
+Keep questions practical and answerable in 1-2 minutes; avoid bleeding-edge or version-specific trivia.`,
+              instructions: `Return ONLY {"interviewQuestions":["Q1","Q2",...]}. No functions, no markdown.`,
+              tools: [],
+            },
+          ];
+
+          let lastResult: string = "{}";
+          for (const node of promptChain) {
+            const prompt = node.prompt.replace("{{LAST_RESULT}}", lastResult);
+
+            const isContext7ToolRequired = node.tools.some((tool) =>
+              tool.startsWith("context7_")
+            );
+
+            const isQueryVectorToolRequired =
+              node.tools.includes("query-vector");
+
+            const selectedToolSets = isContext7ToolRequired
+              ? await context7Mcp.getToolsets()
+              : isQueryVectorToolRequired
+                ? { queryVector: { tool: queryVectorTool } }
+                : {};
+            const reply = await agent.generate(prompt, {
+              instructions: node.instructions,
+              maxTokens: 1000,
+              temperature: 0,
+              toolChoice: "none",
+              toolsets: selectedToolSets,
+            });
+            lastResult = reply.text;
+          }
+
+          let parsedResult;
+          try {
+            let cleanResponse = lastResult;
+
+            cleanResponse = cleanResponse.replace(/^\d+\.\s*/gm, "");
+            cleanResponse = cleanResponse.replace(/^\s*\n\s*/gm, "");
+
+            const jsonMatch = cleanResponse.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              parsedResult = JSON.parse(jsonMatch[0]);
+            } else {
+              throw new Error("No JSON found in response");
             }
 
-          RULES
-          • Return ONLY valid JSON.  
-          • If no relevant job is found (vector tool returns empty or low-score hits), set jobOpeningFound=false and return empty arrays/strings for the rest.  
-          • If any tool fails, proceed gracefully and add "toolFailure": "<short note>" to the JSON.  
-          • All questions must be answerable in 1-2 minutes.`;
-
-          const instructions = `
-          STRICT 5-STEP WORKFLOW – execute sequentially.
-
-          STEP 0  Sanitize inputs  
-            If resumeText or jobPosition is empty → {"jobOpeningFound":false, …} and STOP.
-
-          STEP 1  Job search via vector DB  
-            1.1 query-vector({ "query": "${query}", "limit": 5 })   // <-- dynamic string injected
-            1.2 If result is empty OR top score < 0.75 → {"jobOpeningFound":false, …} and STOP.  
-            1.3 Else extract: jobTitle, jobDescription, sourceUrl (if present in payload).
-
-          STEP 2  Technology extraction …
-          STEP 3  Latest-doc lookup …
-          STEP 4  Question generation …
-          STEP 5  Emit JSON …
-          `;
-
-          const result = await agent.generate(prompt, {
-            instructions: instructions,
-            maxSteps: 6,
-            maxTokens: 2500,
-            temperature: 0.25,
-          });
-          console.log("AI response:", result.text);
+            console.log("Profile:", position);
+            console.log("Experience:", workExperience);
+            console.log("pre questionaires generated:", parsedResult);
+          } catch (parseError) {
+            console.error("Failed to parse AI response as JSON:", parseError);
+            continue;
+          }
         } catch (err) {
-          console.error("Error occurred while AI screening:", err);
+          console.error(
+            "Error occurred while generating interview questions:",
+            err
+          );
         }
-        //   // Try to parse the result as JSON
-        //   let parsedResult;
-        //   try {
-        //     // First, clean the response to remove any non-JSON content
-        //     let cleanResponse = result.text;
-
-        //     // Remove any numbered list formatting if present
-        //     cleanResponse = cleanResponse.replace(/^\d+\.\s*/gm, "");
-        //     cleanResponse = cleanResponse.replace(/^\s*\n\s*/gm, "");
-
-        //     // Try to find JSON object in the response
-        //     const jsonMatch = cleanResponse.match(/\{[\s\S]*\}/);
-        //     if (jsonMatch) {
-        //       parsedResult = JSON.parse(jsonMatch[0]);
-        //     } else {
-        //       throw new Error("No JSON found in response");
-        //     }
-
-        //     console.log(
-        //       "result of ai screening of candidate profile:",
-        //       JSON.stringify(parsedResult)
-        //     );
-        //   } catch (parseError) {
-        //     console.error("Failed to parse AI response as JSON:", parseError);
-        //     console.log("Raw response:", result.text);
-
-        //     // Try to extract questions from the response if JSON parsing fails
-        //     const questions = result.text
-        //       .split("\n")
-        //       .filter((line) => line.trim())
-        //       .map((line) => line.replace(/^\d+\.\s*/, "").trim())
-        //       .filter((q) => q.length > 10 && q.includes("?"))
-        //       .slice(0, 8);
-
-        //     // Create a valid JSON response
-        //     parsedResult = {
-        //       jobOpeningFound: true,
-        //       jobTitle: meaningfulJobPosition,
-        //       jobDescription: "Position based on candidate's application",
-        //       interviewQuestions:
-        //         questions.length > 0
-        //           ? questions
-        //           : [
-        //               "Can you describe your relevant experience?",
-        //               "What technical skills do you bring to this role?",
-        //               "How do you handle challenging situations at work?",
-        //             ],
-        //     };
-        //     console.log(
-        //       "Extracted questions response:",
-        //       JSON.stringify(parsedResult)
-        //     );
-        //   }
-        // } catch (err) {
-        //   console.error(
-        //     "Error occurred while generating interview questions:",
-        //     err
-        //   );
       } catch (err) {
-        console.error(
-          "Error occurred while generating interview questions:",
-          err
-        );
-        const fallbackResponse = {
-          jobOpeningFound: true,
-          jobTitle: keyDetails.position || "Unknown Position",
-          jobDescription: "Position based on candidate's application",
-          interviewQuestions: [
-            "Can you describe your relevant experience?",
-            "What technical skills do you bring to this role?",
-            "How do you handle challenging situations at work?",
-          ],
-        };
-        console.log("Fallback response:", JSON.stringify(fallbackResponse));
+        console.error("Error occurred while AI screening:", err);
       }
-
+      
       const applicationCategory = mail.keyDetails?.position
         ? `${mail.keyDetails?.position?.replaceAll(" ", "_").toUpperCase()}_APPLICANTS`
         : "";
@@ -1477,7 +1475,7 @@ const trackReplyMailsWorkflow = createWorkflow({
   },
 })
   .then(AgentTrigger)
-  // .then(deduplicateNewlyArrivedMails)
+  .then(deduplicateNewlyArrivedMails)
   .foreach(extractEmailMetaData)
   .then(sortReplyEmails)
   .branch([

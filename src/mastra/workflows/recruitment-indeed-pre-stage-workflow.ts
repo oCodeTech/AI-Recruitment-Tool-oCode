@@ -329,8 +329,6 @@ const extractEmailMetaData = createStep({
       //     potientialExperienceStatus = "fresher";
       //   }
 
-      const jobTitleLower = potentialJobTitle?.toLowerCase() || "";
-
       const categoryKeywords = {
         Recruiter: ["recruiter", "hr", "talent acquisition", "it recruitment"],
         Developer: [
@@ -359,7 +357,7 @@ const extractEmailMetaData = createStep({
       };
 
       for (const [cat, keywords] of Object.entries(categoryKeywords)) {
-        if (keywords.some((k) => jobTitleLower.includes(k))) {
+        if (keywords.some((k) => potentialJobTitle ?? "".toLowerCase().includes(k))) {
           potentialCategory = cat;
           break;
         }
